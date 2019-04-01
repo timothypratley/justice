@@ -2,7 +2,7 @@
 
 A [Clojure/Script](https://clojure.org/) library providing a concise rule definition and query syntax for [Datalog](https://en.wikipedia.org/wiki/Datalog).
 
-![Lady Justice](https://png.pngtree.com/element_our/png_detail/20181117/justice-lady-png_240680.jpg)
+![Lady Justice](https://cdn.dribbble.com/users/101244/screenshots/2921435/lady_justice.jpg)
 
 
 ## Rationale
