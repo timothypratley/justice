@@ -5,6 +5,11 @@
             [meander.match.gamma :as m]
             [meander.strategy.gamma :as s]))
 
+(def ^:dynamic *conn* nil)
+
+(defn register [conn]
+  (alter-var-root #'*conn* (constantly conn)))
+
 (def datascript-rule-body
   (comp
     (s/bottom-up
@@ -54,16 +59,23 @@
 
 ;; TODO: need to detect other rule names!!!
 (defmacro defrule [relation-name args body]
-  `(defn ~relation-name [db# x#]
-     ;; TODO: handle all the proposed arities from the README
-     (map #(d/entity db# %)
-          (d/q '{:find [[~'?result ...]]
-                 :in [~'$ ~'% ~@args]
-                 :where [(~relation-name ~@args ~'?result)]}
-               db#
-               '~(datascript-rules
-                   [(datascript-rule relation-name args body)])
-               x#))))
+  `(defn ~relation-name
+     ([]
+       (~relation-name @*conn* "?x"))
+     ([x#]
+       (~relation-name @*conn* x#))
+     ([db# x#]
+       ;; TODO: handle all the proposed arities from the README
+       (map #(d/entity db# %)
+            (d/q '{:find [[~'?result ...]]
+                   :in [~'$ ~'% ~@args]
+                   :where [(~relation-name ~@args ~'?result)]}
+                 db#
+                 '~(datascript-rules
+                     [(datascript-rule relation-name args body)])
+                 (if (map? x#)
+                   (:db/id x#)
+                   x#))))))
 
 #_(macroexpand-1 '(defq ancestor [?x]
                         (or (:entity/parent ?x)

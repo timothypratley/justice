@@ -36,6 +36,8 @@ Add justice to your dependencies:
 
     [justice "0.0.1-alpha"]
 
+See [examples](examples) for executable code described below.
+
 
 ### Setup (DataScript)
 
@@ -50,22 +52,26 @@ An entity can have only one parent.
       (:require [datascript.core :as d]))
     (def schema
       {:entity/parent {:db/valueType :db.type/ref
-                       :db/cardinality :db.cardinality/one}}
+                       :db/cardinality :db.cardinality/one}})
     (def conn
       (d/create-conn schema))
     (def seed
       [{:db/id -1
-        :character/name "A"}
-       {:db/id -2
-        :character/name "B"
-        :entity/parent -1}
-       {:db/id -3
-        :character/name "C"
+        :entity/name "Justice"
         :entity/parent -2}
+       {:db/id -2
+        :entity/name "Mother"
+        :entity/parent -3}
+       {:db/id -3
+        :entity/name "Grandmother"
+        :entity/death "278 BC"}
        {:db/id -4
-        :character/name "D"
-        :entity/parent -3}])
-    (d/transact! conn seed)
+        :entity/name "Good Child"
+        :entity/parent -1}
+       {:db/id -5
+        :entity/name "Bad Child"
+        :entity/parent -1}])
+      (d/transact! conn seed)
 
 Now we are ready to define our rule.
 
@@ -147,8 +153,7 @@ Fact clause direction can be inverted with the `_` convention:
 Rules can be called with no arguments:
 
     (ancestor)
-    ;=> [[{:db/id 1} {:db/id 2}]
-         [{:db/id 1} {:db/id 3}]]
+    ;=> [[{:db/id 1} {:db/id 2}] [{:db/id 1} {:db/id 3}]]
 
 Resulting in all possible answers based on existing facts.
 
@@ -157,7 +162,7 @@ Resulting in all possible answers based on existing facts.
 
 Rules can call other rules:
 
-    (defrule dead-ancestors [?x]
+    (j/defrule dead-ancestors [?x]
       (and (:entity/_death ?x)
            (ancestor ?x)))
 

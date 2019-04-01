@@ -6,4 +6,5 @@
   :dependencies [[org.clojure/clojure "1.10.0" :scope "provided"]
                  [datascript "0.18.2" :scope "provided"]
                  [meander/gamma "0.0.5"]]
+  :profiles {:dev {:source-paths ["examples"]}}
   :repl-options {:init-ns justice.core})
