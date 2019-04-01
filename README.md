@@ -112,16 +112,18 @@ Entities provide a lazy, associative view of all the information that can be rea
 
     (map :entity/name (ancestor 1))
     ;=> ("A", "B", "C")
+    
+See also `d/touch` which will realize all attributes of an entity. 
 
 A [lookup ref](https://docs.datomic.com/on-prem/identity.html) can be supplied instead of an entity id:
     
     (ancestor [:entity/name "Justice"])
-    ;=> ("A", "B", "C")
+    ;=> [{:db/id 2} {:db/id 3}]
     
-An entity can be supplied instead of an entity id:
+An entity can be supplied instead of an entity id or lookup ref:
 
     (ancestor {:db/id 1})
-    ;=> ("A", "B", "C")
+    ;=> [{:db/id 2} {:db/id 3}]
 
 
 ### Directionality
@@ -160,7 +162,7 @@ Rules can call other rules:
            (ancestor ?x)))
 
     (dead-ancestors [:entity/name "Justice"])
-    ;=> ("A", "B")
+    ;=> [{:db/id 2} {:db/id 3}]
 
 
 ### Warning: justice without mercy
@@ -173,7 +175,7 @@ just as it is in Datalog.
 
 Justice rewrites the rule syntax into Datalog queries with rule clauses.
 
-The `ancestor` rule presented previously produces code very similar to this:
+The `ancestor` rule presented previously produces code similar to this:
 
     (datascript.core/q
        '{:find [[?result ...]]
