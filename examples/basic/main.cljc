@@ -10,7 +10,7 @@
 (ancestor @s/conn 1)
 ;=> (#:db{:id 3} #:db{:id 2})
 
-(j/register s/conn)
+(j/attach s/conn)
 (ancestor 1)
 ;=> (#:db{:id 3} #:db{:id 2})
 
@@ -30,20 +30,39 @@
 (ancestor #:db{:id 1})
 ;=> (#:db{:id 3} #:db{:id 2})
 
-;;(ancestor ?x 1)
-;=> TODO!!!
+(ancestor '?x 1)
+;=> (#:db{:id 4} #:db{:id 5})
+
+(map :entity/name (ancestor '?x 1))
+;=> ("Good Child" "Bad Child")
 
 (j/defrule descendant [?x]
   (or (:entity/_parent ?x)
       (:entity/_parent (descendant ?x))))
-(descendant [:entity/name "Justice"])
-;=> TODO!!!
+(map :entity/name (descendant 1))
+;=> ("Good Child" "Bad Child")
 
 (ancestor)
-;=> TODO!!!
+;=> {#:db{:id 4} [#:db{:id 3} #:db{:id 2} #:db{:id 1}],
+;    #:db{:id 2} [#:db{:id 3}],
+;    #:db{:id 5} [#:db{:id 3} #:db{:id 2} #:db{:id 1}],
+;    #:db{:id 1} [#:db{:id 3} #:db{:id 2}]}
+
+(ancestor 1 3)
+;=> true
+
+(ancestor 1 5)
+;=> false
 
 (j/defrule dead-ancestors [?x]
-         (and (:entity/_death ?x)
-              (ancestor ?x)))
-(dead-ancestors [:entity/name "Justice"])
-;=> TODO!!!
+  (and (:entity/_death _)
+       (ancestor ?x)))
+(map :entity/name (dead-ancestors [:entity/name "Justice"]))
+;=> ("Grandmother")
+
+(j/defrule ancestor* [?x]
+  (or [?x :entity/parent ?result]
+      (and [?x :entity/parent ?z]
+           (ancestor* ?z ?result))))
+(map :entity/name (ancestor* 1))
+;=> ("Grandmother" "Mother")

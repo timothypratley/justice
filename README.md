@@ -41,37 +41,33 @@ See [examples](examples) for executable code described below.
 
 ### Setup (DataScript)
 
-Consider defining an `ancestor` rule.
-Given an entity, the `ancestor` rule will find all ancestors of that entity.
-Before we can define this rule we need to create a db to operate on.
+Say we want to define an `ancestor` rule.
+We might start with some facts indicating who is a `parent` of who.
+And we want to say that an ancestor is a parent, or ancestor of a parent.
 
-We create a schema for this data which defines an `:entity/parent` attribute.
-An entity can have only one parent.
+Before we can define this rule we need to create a db schema and some test data to operate on.
+The schema defines an `:entity/parent` attribute.
+For this example an entity can have only one parent.
 
     (ns basic.setup
       (:require [datascript.core :as d]))
+
     (def schema
       {:entity/parent {:db/valueType :db.type/ref
                        :db/cardinality :db.cardinality/one}})
+
     (def conn
       (d/create-conn schema))
+
     (def seed
-      [{:db/id -1
-        :entity/name "Justice"
-        :entity/parent -2}
-       {:db/id -2
-        :entity/name "Mother"
-        :entity/parent -3}
-       {:db/id -3
-        :entity/name "Grandmother"
-        :entity/death "278 BC"}
-       {:db/id -4
-        :entity/name "Good Child"
-        :entity/parent -1}
-       {:db/id -5
-        :entity/name "Bad Child"
-        :entity/parent -1}])
-      (d/transact! conn seed)
+      [{:entity/name "Justice"
+        :entity/parent {:entity/name "Mother"
+                        :entity/parent {:entity/name "Grandmother"
+                                        :entity/death "278 BC"}}
+        :entity/_parent [{:entity/name "Good Child"}
+                         {:entity/name "Bad Child"}]}])
+
+    (d/transact! conn seed)
 
 Now we are ready to define our rule.
 
@@ -81,7 +77,8 @@ Now we are ready to define our rule.
 Require justice from your code:
 
     (ns basic.main
-      (:require [justice.core :as j]))
+      (:require [justice.core :as j]
+                [basic.setup :as s]))
 
 Rules are defined in a similar way to `defn`:
 
@@ -106,12 +103,19 @@ Rules are functions.
 But rules need a database in context to resolve against.
 There are two ways to pass in the database:
 
-1. Calling a rule with a database as the first argument:
-   `(ancestor @conn 1) ;=> [{:db/id 2} {:db/id 3}]`
-2. Alternatively, you can register a database connection:
-   `(j/register conn)`    
-   Subsequently all rule applications can omit the database argument:
-   `(ancestor 1) ;=> [{:db/id 2} {:db/id 3}]`
+Calling a rule with a database as the first argument:
+
+    (ancestor @s/conn 1)
+    ;=> (#:db{:id 3} #:db{:id 2})
+
+Alternatively, you can attach to a database connection:
+
+    (j/attach s/conn)
+
+Rule applications can then omit the database argument:
+
+    (ancestor 1)
+    ;=> (#:db{:id 3} #:db{:id 2})
 
 The result of applying a rule is a sequence of [entities](https://docs.datomic.com/on-prem/entities.html).
 Entities provide a lazy, associative view of all the information that can be reached from an id.
@@ -122,24 +126,26 @@ Entities provide a lazy, associative view of all the information that can be rea
 See also `d/touch` which will realize all attributes of an entity. 
 
 A [lookup ref](https://docs.datomic.com/on-prem/identity.html) can be supplied instead of an entity id:
-    
+
     (ancestor [:entity/name "Justice"])
-    ;=> [{:db/id 2} {:db/id 3}]
-    
+    ;=> (#:db{:id 3} #:db{:id 2})
+
 An entity can be supplied instead of an entity id or lookup ref:
 
     (ancestor {:db/id 1})
-    ;=> [{:db/id 2} {:db/id 3}]
+    ;=> (#:db{:id 3} #:db{:id 2})
 
 
 ### Directionality
 
-Rules can be inverted by supplying an unbound variable:
+Rules can be inverted by supplying an unbound variable preceding the entity:
 
-    (ancestor ?x [:entity/name "Justice"])
-    ;=> [{:db/id 4}]
+    (map :entity/name (ancestor '?x 1))
+    ;=> ("Good Child" "Bad Child")
 
-Fact clause direction can be inverted with the `_` convention:
+The name `?x` chosen here does not matter, it can be any variable starting with `?`
+
+Fact clause direction can be inverted with the `/_` convention:
 
     (defrule descendant [?x]
       (or (:entity/_parent ?x)
@@ -150,24 +156,84 @@ Fact clause direction can be inverted with the `_` convention:
 
 ### Cartesian Product
 
-Rules can be called with no arguments:
+Rules can be called with no arguments, resulting in all possible answers based on existing facts:
 
     (ancestor)
-    ;=> [[{:db/id 1} {:db/id 2}] [{:db/id 1} {:db/id 3}]]
+    ;=> {#:db{:id 4} [#:db{:id 3} #:db{:id 2} #:db{:id 1}],
+    ;    #:db{:id 2} [#:db{:id 3}],
+    ;    #:db{:id 5} [#:db{:id 3} #:db{:id 2} #:db{:id 1}],
+    ;    #:db{:id 1} [#:db{:id 3} #:db{:id 2}]}
 
-Resulting in all possible answers based on existing facts.
+Here we get a map with person keys and a vector of their ancestors as values.
+
+
+### Truth checking
+
+Rules can be called with 2 arguments to test if the rule holds:
+
+    (ancestor 1 3)
+    ;=> true
+
+    (ancestor 1 5)
+    ;=> false
 
 
 ### Composing rules
 
-Rules can call other rules:
+Rules can make use of other rules:
 
     (j/defrule dead-ancestors [?x]
-      (and (:entity/_death ?x)
+      (and (:entity/_death _)
            (ancestor ?x)))
+    (map :entity/name (dead-ancestors [:entity/name "Justice"]))
+    ;=> ("Grandmother")
 
-    (dead-ancestors [:entity/name "Justice"])
-    ;=> [{:db/id 2} {:db/id 3}]
+While it appears that `dead-ancestors` applies `ancestor` directly,
+this is not the case.
+What really happens here is that justice produces a set of dependent rules,
+which are used in a query.
+This is important to understand, as it explains why regular functions cannot appear in rules.
+
+
+### Debugging rules
+
+Having rules be self contained functions makes it easier to invoke them in isolation while debugging.
+
+Sometimes it is helpful to see the DataScript that a justice rule will produce.
+Calls to rules wrapped with `trace` will print out the underlying DataScript query being made and return the result.
+
+    (j/trace
+      (ancestor 1))
+    ;;; QUERY:
+    ;   (datascript.core/q
+    ;    {:find [[?result ...]],
+    ;     :in [$ % ?a _],
+    ;     :where [(basic.main/ancestor ?a ?result)]}
+    ;    [[(basic.main/ancestor ?x ?result)
+    ;      [?x :entity/parent ?result]]
+    ;     [(basic.main/ancestor ?x ?result)
+    ;      [?bridge_23980 :entity/parent ?result]
+    ;      (basic.main/ancestor ?x ?bridge_23980)]]
+    ;    1
+    ;    ?y)
+    => (#:db{:id 3} #:db{:id 2})
+
+You can also look in the rule registry at `*rule-registry*`.
+Rules are stored in a map of `rule-name` -> `[[(rule-name ?a ?b) [clause]+]]`.
+
+
+### Aggregates
+
+A syntax for aggregation is not (yet) provided.
+But remember that entities are amenable to aggregate operations.
+You can use Clojure's built in aggregates to operate over the sequence of entities produced.
+
+    (count (ancestor 1))
+    ;=> 3
+
+And use navigation for more complex aggregations.
+
+DataScript supports aggregations, it's just not clear to me how they would work with this syntax.
 
 
 ### Warning: justice without mercy
@@ -176,11 +242,11 @@ It is possible to express non-terminating recursive rules in justice,
 just as it is in Datalog.
 
     
-## How it works
+### How it works
 
 Justice rewrites the rule syntax into Datalog queries with rule clauses.
 
-The `ancestor` rule presented previously produces code similar to this:
+The `ancestor` rule produces code that effectively performs a query:
 
     (datascript.core/q
        '{:find [[?result ...]]
@@ -194,9 +260,32 @@ The `ancestor` rule presented previously produces code similar to this:
           (ancestor ?x ?bridge)]]
        [:entity/name "Justice"])
 
-Justice syntax is more concise than DataScript queries and handles several shorthand conventions.
+The justice syntax is more concise than DataScript queries and handles several shorthand conventions.
 However, justice syntax is restricted in what can be expressed.
-There is no way (yet) to produce "row" results (non-entities).
+There is no way (yet) to produce "row" results (non-entities) or aggregates.
+
+Justice maintains a rule registry of all rules created with `defrule`.
+
+
+### Escaping the justice syntax
+
+The `?result` symbol is special, and that you can escape the justice syntax if you need to:
+
+    (j/defrule ancestor* [?x]
+      (or [?x :entity/parent ?result]
+          (and [?x :entity/parent ?z]
+               (ancestor* ?z ?result))))
+    (map :entity/name (ancestor* 1))
+    ;=> ("Grandmother" "Mother")
+
+This new version `ancestor*` is equivalent to the original `ancestor`,
+but has been expressed in triples instead.
+You can use this to opt out of the full transformation but still express concise rules.
+
+
+### Transacting
+
+Justice provides `transacte` which behaves very similar to `d/transact!` but returns the first entity.
 
 
 ## Developing
@@ -209,12 +298,14 @@ There is no way (yet) to produce "row" results (non-entities).
 - [ ] Support Datomic as well as DataScript.
 - [ ] Should rules allow multiple input variables? `(defrule r [?x ?y] ...)`
 - [ ] Should there be a way for rules to produce rows? (non-entity results)
-      -- I don't think so, the whole point is to not produce maps.
+      -- I don't think so, the whole point is to stick with entities?
 - [ ] Is there be a concise syntax for updates?
-- [ ] Provide syntax checking and nice error messages.
+      -- `d/transact!` is already pretty great?
+      -- Entity versions of assoc/dissoc/update?
+- [ ] Provide syntax checking and nice error messages!!!
 - [ ] Check for left recursive forms.
-- [ ] Should there be a way to invert the direction of rule recursion?
-      -- possibly just by providing another unbound variable?
+- [ ] Check for unused variables.
+- [ ] Find a way to make testable examples
 
 
 ## License
