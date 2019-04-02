@@ -121,7 +121,7 @@ The result of applying a rule is a sequence of [entities](https://docs.datomic.c
 Entities provide a lazy, associative view of all the information that can be reached from an id.
 
     (map :entity/name (ancestor 1))
-    ;=> ("A", "B", "C")
+    ;=> ("Grandmother" "Mother")
     
 See also `d/touch` which will realize all attributes of an entity. 
 
