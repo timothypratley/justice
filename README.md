@@ -150,13 +150,14 @@ Fact clause direction can be inverted with the `/_` convention:
     (defrule descendant [?x]
       (or (:entity/_parent ?x)
           (:entity/_parent (descendant ?x))))
-    (descedant [:entity/name "Justice"])
-    ;=> [{:db/id 4}]
+    (map :entity/name (descendant 1))
+    ;=> ("Good Child" "Bad Child")
 
 
 ### Cartesian Product
 
-Rules can be called with no arguments, resulting in all possible answers based on existing facts:
+Rules can be called with no arguments (equivalent to supplying both as variables),
+resulting in all possible answers based on existing facts:
 
     (ancestor)
     ;=> {#:db{:id 4} [#:db{:id 3} #:db{:id 2} #:db{:id 1}],
@@ -169,7 +170,7 @@ Here we get a map with person keys and a vector of their ancestors as values.
 
 ### Truth checking
 
-Rules can be called with 2 arguments to test if the rule holds:
+Rules can be called with 2 entity arguments to test if the rule holds:
 
     (ancestor 1 3)
     ;=> true
@@ -225,15 +226,15 @@ Rules are stored in a map of `rule-name` -> `[[(rule-name ?a ?b) [clause]+]]`.
 ### Aggregates
 
 A syntax for aggregation is not (yet) provided.
-But remember that entities are amenable to aggregate operations.
+Entities are amenable to aggregate operations.
 You can use Clojure's built in aggregates to operate over the sequence of entities produced.
 
     (count (ancestor 1))
     ;=> 3
 
-And use navigation for more complex aggregations.
+Entity navigation can be utilized for more complex aggregations.
 
-DataScript supports aggregations, it's just not clear to me how they would work with this syntax.
+DataScript supports aggregations, but it's not clear to me how they would work with this syntax.
 
 
 ### Warning: justice without mercy
