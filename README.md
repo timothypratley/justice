@@ -230,7 +230,7 @@ Entities are amenable to aggregate operations.
 You can use Clojure's built in aggregates to operate over the sequence of entities produced.
 
     (count (ancestor 1))
-    ;=> 3
+    ;=> 2
 
 Entity navigation can be utilized for more complex aggregations.
 
