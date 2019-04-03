@@ -175,16 +175,17 @@ Given an Entity `e`, you can reverse lookup children of `e` with `(:entity/_pare
 
 Rules can be called with no arguments to get all possible answers based on existing facts:
 
-    (ancestor)
-    ;=> ((#:db{:id 4} #:db{:id 3})
-    ;    (#:db{:id 2} #:db{:id 3})
-    ;    (#:db{:id 4} #:db{:id 2})
-    ;    (#:db{:id 5} #:db{:id 3})
-    ;    (#:db{:id 4} #:db{:id 1})
-    ;    (#:db{:id 5} #:db{:id 2})
-    ;    (#:db{:id 1} #:db{:id 3})
-    ;    (#:db{:id 5} #:db{:id 1})
-    ;    (#:db{:id 1} #:db{:id 2}))
+    (->> (ancestor)
+         (map (partial map :entity/name)))
+    ;=> (("Good Child" "Grandmother")
+    ;    ("Mother" "Grandmother")
+    ;    ("Good Child" "Mother")
+    ;    ("Bad Child" "Grandmother")
+    ;    ("Good Child" "Justice")
+    ;    ("Bad Child" "Mother")
+    ;    ("Justice" "Grandmother")
+    ;    ("Bad Child" "Justice")
+    ;    ("Justice" "Mother"))
 
 Supplying no arguments is syntactic sugar for `(ancestor '?x '?y)`.
 
