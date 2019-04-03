@@ -176,8 +176,7 @@ Given an Entity `e`, you can reverse lookup children of `e` with `(:entity/_pare
 
 ### Cartesian Product
 
-Rules can be called with no arguments (equivalent to supplying both as variables),
-resulting in all possible answers based on existing facts:
+Rules can be called with no arguments to get all possible answers based on existing facts:
 
     (ancestor)
     ;=> ((#:db{:id 4} #:db{:id 3})
