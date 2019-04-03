@@ -15,13 +15,13 @@ but that the syntax is cumbersome.
 Christope presents a syntactic fix for rule application;
 
     ancestor(Me,P) :- parent(Me,P).
-    ancestor(Me,G) :- ancestor(Me,E), parent(E,G).
+    ancestor(Me,G) :- parent(Me,E), ancestor(E,G).
 
 Can be more concisely written as:
 
-    ancestor(Me) := parent(Me) | parent(ancestor(Me)).
+    ancestor(Me) := parent(Me) | ancestor(parent(Me)).
 
-Where bridge variables are implied.
+Where the bridging variables P, G, and E don't need to be written as they are implied.
 
 Justice is a Lisp flavoured implementation of this syntax on top of DataScript,
 providing a concise way to create and query with rules.
@@ -86,17 +86,14 @@ Rules are defined in a similar way to `defn`:
       (or (:entity/parent ?x)
           (ancestor (:entity/parent ?x))))
 
-The clause `(:entity/parent ?x)` implies that
-the result is the value of the attribute `:entity/parent` of input `?x`.
-This notation is consistent with a get value by keyword from a map.
-You can read this as "`?x` has an `:entity/parent` value `?result`",
-which is consistent with the DataScript where clause `[?x :entity/parent ?result]`.
+The notation `(:entity/parent ?x)` is consistent with using keywords as get functions.
+You can read this expression informally as "get the parent of input x."
 
 The clause `(ancestor (:entity/parent ?x))` implies a recursive application of the rule.
-The input `?x` has an `:entity/parent`.
-That parent will be used in the application of `ancestor`.
-The result will be the result of ancestor applied to the parent of `?x`.
-This is consistent with function application.
+If the input x has a parent, then that parent might have an ancestor.
+If this is true, then the final result will be the ancestor of the parent of x.
+This notation is consistent with function application.
+You can read it informally as "find the ancestor of the parent of input x."
 
 The term `or` implies that either sub-clause will match with existing facts.
 
@@ -227,6 +224,17 @@ It does however implicitly relate to the `?result`.
 Thus a restriction has been made that the result entity has an `:entity/death`.
 This is analogous to a "where" clause in SQL.
 
+You can use the same approach to introduce new logic variables.
+We could have introduced `?death` to be bound to "date of death" instead of the ignoring the value with `_`.
+Thus we can chain together conditions with other clauses.
+
+
+### Select clauses
+
+Justice does not produce "row" results (non-Entities).
+Results are intended to be either scalars or navigated using the Entity interface.
+Rows can be approximated with `(juxt :field1 :field2)`to produce a function that will call `:field1` and `:field2` on an Entity,
+but the Entity abstraction is preferable for both clarity and performance.
 
 ### Debugging rules
 
@@ -252,6 +260,7 @@ Calls to rules wrapped with `trace` will print out the underlying DataScript que
     => (#:db{:id 3} #:db{:id 2})
 
 You can also look in the rule registry at `*rule-registry*`.
+
 Rules are stored in a map of `rule-name` -> `[[(rule-name ?a ?b) [clause]+]]`.
 
 
@@ -280,9 +289,9 @@ just as it is in Datalog.
 Justice rewrites the rule syntax into Datalog queries with rule clauses.
 The pattern based rewriting is made possible by [Meander](https://github.com/noprompt/meander).
 
-The `ancestor` rule produces code that constructs a query:
+The `ancestor` rule produces code that constructs a query similar to:
 
-    (datascript.core/q
+    (d/q
        '{:find [[?result ...]]
          :where [(ancestor ?x ?result)]
          :in [$ % ?x]}
@@ -294,16 +303,20 @@ The `ancestor` rule produces code that constructs a query:
           (ancestor ?x ?bridge)]]
        [:entity/name "Justice"])
 
-The justice syntax is more concise than DataScript queries and handles several shorthand conventions.
-However, justice syntax is restricted in what can be expressed.
-There is no way (yet) to produce "row" results (non-Entities) or aggregates.
+The justice clause `(:entity/parent ?x)` translates to a DataScript relation clause `[?x :entity/parent ?result]`.
+The order of the relation is the reverse of the justice abstraction.
+Bridge variables are created to join the clauses together.
 
 Justice maintains a rule registry of all rules created with `defrule`.
+The registry is global, but rule names are prefixed by the namespace they are defined in.
 
 
-### Escaping the justice syntax
+### Escaping the justice system
 
-The `?result` symbol is special, and that you can escape the justice syntax if you need to:
+The justice syntax is more concise than DataScript queries and handles several shorthand conventions.
+However, justice syntax is restricted in what can be expressed.
+
+The `?result` symbol is special, it is always bound to the final result.
 
     (j/defrule ancestor* [?x]
       (or [?x :entity/parent ?result]
@@ -312,9 +325,10 @@ The `?result` symbol is special, and that you can escape the justice syntax if y
     (map :entity/name (ancestor* 1))
     ;=> ("Grandmother" "Mother")
 
-This new version `ancestor*` is equivalent to the original `ancestor`,
-but has been expressed in triples instead.
-You can use this to opt out of the full transformation but still express concise rules.
+This new rule `ancestor*` is equivalent to the original `ancestor`,
+but has been expressed in relation triple clauses.
+
+You can use this style to opt out of transformation.
 
 
 ### Transacting
