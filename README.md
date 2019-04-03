@@ -221,6 +221,14 @@ which are used in a query.
 This is important to understand, as it explains why regular functions cannot appear in rules.
 
 
+### Where clauses
+
+Notice that in the `dead-ancestors` rule, the first clause `(:entity/_death _)` does not relate to the input `?x`.
+It does however implicitly relate to the `?result`.
+Thus a restriction has been made that the result entity has an `:entity/death`.
+This is analogous to a "where" clause in SQL.
+
+
 ### Debugging rules
 
 Having rules be self contained functions makes it easier to invoke them in isolation while debugging.
