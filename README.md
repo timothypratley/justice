@@ -84,15 +84,19 @@ Rules are defined in a similar way to `defn`:
 
     (j/defrule ancestor [?x]
       (or (:entity/parent ?x)
-          (:entity/parent (ancestor ?x))))
+          (ancestor (:entity/parent ?x))))
 
 The clause `(:entity/parent ?x)` implies that
-the result is the value of the attribute `:entity/parent` of the input entity.
+the result is the value of the attribute `:entity/parent` of input `?x`.
+This notation is consistent with a get value by keyword from a map.
+You can read this as "`?x` has an `:entity/parent` value `?result`",
+which is consistent with the DataScript where clause `[?x :entity/parent ?result]`.
 
-The clause `(ancestor ?x)` implies a recursive application of the rule.
-
-The clause `(:entity/parent (ancestor ?x))` implies that the inner result has attribute `:entity/parent`,
-and that the value of that attribute is the outer result.
+The clause `(ancestor (:entity/parent ?x))` implies a recursive application of the rule.
+The input `?x` has an `:entity/parent`.
+That parent will be used in the application of `ancestor`.
+The result will be the result of ancestor applied to the parent of `?x`.
+This is consistent with function application.
 
 The term `or` implies that either sub-clause will match with existing facts.
 
@@ -100,19 +104,19 @@ The term `or` implies that either sub-clause will match with existing facts.
 ### Applying rules
 
 Rules are functions.
-But rules need a database in context to resolve against.
+Rules need a database in context to resolve against.
 There are two ways to pass in the database:
 
-Calling a rule with a database as the first argument:
+Passing a database as the first argument:
 
     (ancestor @s/conn 1)
     ;=> (#:db{:id 3} #:db{:id 2})
 
-Alternatively, you can attach to a database connection:
+Attaching to a database connection:
 
     (j/attach s/conn)
 
-Rule applications can then omit the database argument:
+After attaching, rule applications can omit the database argument:
 
     (ancestor 1)
     ;=> (#:db{:id 3} #:db{:id 2})
@@ -123,35 +127,51 @@ Entities provide a lazy, associative view of all the information that can be rea
     (map :entity/name (ancestor 1))
     ;=> ("Grandmother" "Mother")
     
-See also `d/touch` which will realize all attributes of an entity. 
+Entities only pull attributes when you access them.
+To realize all attributes, use `d/touch`.
+When following relations, the result is another Entity.
 
 A [lookup ref](https://docs.datomic.com/on-prem/identity.html) can be supplied instead of an entity id:
 
     (ancestor [:entity/name "Justice"])
     ;=> (#:db{:id 3} #:db{:id 2})
 
-An entity can be supplied instead of an entity id or lookup ref:
+An Entity can be supplied instead of an entity id or lookup ref:
 
     (ancestor {:db/id 1})
     ;=> (#:db{:id 3} #:db{:id 2})
 
 
-### Directionality
+### Query direction
 
-Rules can be inverted by supplying an unbound variable preceding the entity:
+Rules can query what input produces a result value:
+
+    (map :entity/name (j/_invert [:entity/name "Justice"] ancestor))
+    ;=> ("Good Child" "Bad Child")
+
+Here we use `_invert` to ask for whome does `ancestor` result in "Justice"?
+It is clear that "Justice" is not an input because she appears before the rule in the expression.
+You can read this as "Unify Justice with (ancestor ?x)", thus ?x will be an input that results in "Justice".
+And indeed `_invert` is syntactic sugar for supplying an unbound variable:
 
     (map :entity/name (ancestor '?x 1))
     ;=> ("Good Child" "Bad Child")
 
-The name `?x` chosen here does not matter, it can be any variable starting with `?`
+The name `?x` chosen here does not matter, it can be any variable starting with `?`.
 
-Fact clause direction can be inverted with the `/_` convention:
+
+### Attribute direction
+
+Fact clauses can be inverted with the `/_` reverse lookup convention:
 
     (defrule descendant [?x]
       (or (:entity/_parent ?x)
-          (:entity/_parent (descendant ?x))))
+          (descendant (:entity/_parent ?x))))
     (map :entity/name (descendant 1))
     ;=> ("Good Child" "Bad Child")
+
+This notation is consistent with Entity navigation.
+Given an Entity `e`, you can reverse lookup children of `e` with `(:entity/_parent e)`.
 
 
 ### Cartesian Product
@@ -160,17 +180,22 @@ Rules can be called with no arguments (equivalent to supplying both as variables
 resulting in all possible answers based on existing facts:
 
     (ancestor)
-    ;=> {#:db{:id 4} [#:db{:id 3} #:db{:id 2} #:db{:id 1}],
-    ;    #:db{:id 2} [#:db{:id 3}],
-    ;    #:db{:id 5} [#:db{:id 3} #:db{:id 2} #:db{:id 1}],
-    ;    #:db{:id 1} [#:db{:id 3} #:db{:id 2}]}
+    ;=> ((#:db{:id 4} #:db{:id 3})
+    ;    (#:db{:id 2} #:db{:id 3})
+    ;    (#:db{:id 4} #:db{:id 2})
+    ;    (#:db{:id 5} #:db{:id 3})
+    ;    (#:db{:id 4} #:db{:id 1})
+    ;    (#:db{:id 5} #:db{:id 2})
+    ;    (#:db{:id 1} #:db{:id 3})
+    ;    (#:db{:id 5} #:db{:id 1})
+    ;    (#:db{:id 1} #:db{:id 2}))
 
-Here we get a map with person keys and a vector of their ancestors as values.
+Supplying no arguments is syntactic sugar for `(ancestor '?x '?y)`.
 
 
 ### Truth checking
 
-Rules can be called with 2 entity arguments to test if the rule holds:
+Rules can be called with 2 Entity arguments to test if the rule holds:
 
     (ancestor 1 3)
     ;=> true
@@ -246,8 +271,9 @@ just as it is in Datalog.
 ### How it works
 
 Justice rewrites the rule syntax into Datalog queries with rule clauses.
+The pattern based rewriting is made possible by [Meander](https://github.com/noprompt/meander).
 
-The `ancestor` rule produces code that effectively performs a query:
+The `ancestor` rule produces code that constructs a query:
 
     (datascript.core/q
        '{:find [[?result ...]]
@@ -263,7 +289,7 @@ The `ancestor` rule produces code that effectively performs a query:
 
 The justice syntax is more concise than DataScript queries and handles several shorthand conventions.
 However, justice syntax is restricted in what can be expressed.
-There is no way (yet) to produce "row" results (non-entities) or aggregates.
+There is no way (yet) to produce "row" results (non-Entities) or aggregates.
 
 Justice maintains a rule registry of all rules created with `defrule`.
 

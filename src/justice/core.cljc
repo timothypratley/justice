@@ -32,31 +32,55 @@
   []
   (vec (mapcat val *rule-registry*)))
 
-(defn inverse? [k]
+(defn inverse?
+  "Keyword is something like :my.namespace/_attribute which indicates an inverse relationship."
+  [k]
   (re-find #"/_" (str k)))
 
-(defn forward [k]
+(defn forward
+  "DataScript triple clauses cannot contain inverse relationship keywords, convert them."
+  [k]
   (keyword (subs (string/replace (str k) #"/_" "/") 1)))
+
+(def logic-terms
+  #{'and 'or 'not})
 
 (def datascript-rule-body
   "Converts justice rule syntax into DataScript bridged triple syntax."
-  (comp
-    (s/bottom-up
-      (s/attempt
-        (s/match
-          (and (?k ?target)
-               (guard (keyword? ?k)))
-          (if (inverse? ?k)
-            ['?result (forward ?k) ?target]
-            [?target ?k '?result]))))
-    (s/bottom-up
-      (s/attempt
-        (s/match
-          (and (?r (?a ?b))
-               (guard (not (#{'and 'or} ?r))))
-          (let [v (gensym "?bridge_")]
-            (list 'and (list ?r v)
-                  (list ?a ?b v))))))))
+  (s/until = (s/bottom-up
+               (s/attempt
+                 (s/match
+                   ;; base case; link to the ?result to be found
+                   ;; keyword get style (:some/attribute ?x)
+                   ;; translates to a DataScript triple clause [?x :some/attribute ?result]
+                   (and (?a ?b)
+                        (guard (not (contains? logic-terms ?a)))
+                        (guard (not (seqable? ?b))))
+                   (if (keyword? ?a)
+                     (if (inverse? ?a)
+                       ['?result (forward ?a) ?b]
+                       [?b ?a '?result])
+                     (list ?a ?b '?result))
+
+                   ;; expand nested call syntax
+                   ;; to a bridged pair of DataScript triple clauses:
+                   ;; (:k2 (:k1 ?x))
+                   ;; => (and [?x :k1 ?bridge] [?bridge :k2 ?result])
+                   ;; or bridged rule application:
+                   ;; (:k2 (my-rule ?x))
+                   ;; => (and (my-rule ?x ?bridge) [?bridge :k2 ?result])
+                   (and (?new [?a ?b ?c])
+                        (guard (not (contains? logic-terms ?new))))
+                   (let [bridge (gensym "?bridge_")]
+                     (list 'and
+                           [?a ?b bridge]
+                           (if (keyword? ?new)
+                             (if (inverse? ?new)
+                               [?c (forward ?new) bridge]
+                               [bridge ?new ?c])
+                             (if (= '?result ?c)
+                               (list ?new bridge ?c)
+                               (list ?new ?c bridge))))))))))
 
 (defn datascript-rule
   "A DataScript rule consists of a head describing the name/inputs, and clauses in tripple syntax."
@@ -64,25 +88,20 @@
   [(list* (symbol relation-name) (conj args '?result))
    (datascript-rule-body body)])
 
-;; TODO: Right now you can't nest more than 2 layers: (or (and (or ...)))
-;; Unnesting completely would require creating new rules as bridges... which is totally possible.
+;; TODO: (and (or ...)))
+;; Un-nesting completely would require creating new rules as bridges... which is totally possible.
 ;; Alternatively can or/and be made to work with or-join? Is that just as efficient?
 (def datascript-rules
   "Converts justice and/or syntax to DataScript conjunction/disjunction syntax."
-  (comp
-    ;; Replace any top level and with implied
-    (s/bottom-up
-      (s/attempt
-        (s/match
-          [?rule-head (~'and . !clauses ...)]
-          (into [?rule-head] !clauses))))
-    ;; Replace any top level or with multiple rules
-    (s/bottom-up
-      (s/attempt
-        (s/match
-          [[?rule-head (~'or . !clauses ...)]]
-          (vec (for [clause !clauses]
-                 [?rule-head clause])))))))
+  (s/until = (s/rewrite
+               ;; `and` expressions: [rule-head (and clause1 clause2)]
+               ;; translates to conjunctive form: [rule-head clause1 clause2]
+               [!before ... [?head (~'and . !clauses ...)] . !after ...]
+               [!before ... [?head . !clauses ...] ...       !after ...]
+               ;; `or` expressions: [rule-head (or clause1 clause2)]
+               ;; translates to disjunctive form: [rule-head clause1] [my-rule clause2]
+               [!before ... [?head (~'or . !clauses ...)]  . !after ...]
+               [!before ... [?head !clauses] ...             !after ...])))
 
 (defn qualify [s]
   (symbol (name (ns-name *ns*)) (name s)))
@@ -94,7 +113,7 @@
       (s/match
         (and (?s . !args ...)
              (guard (and (symbol? ?s)
-                         (not (#{'and 'or} ?s))
+                         (not (contains? logic-terms ?s))
                          (not (qualified-symbol? ?s)))))
         (list* (qualify ?s) !args)))))
 
@@ -176,11 +195,7 @@
                      (maybe-id b))]
      (cond (and (variable? a) (variable? b))
            ;; Cartesian product
-           (reduce
-             (fn [acc [k v]]
-               (update acc (d/entity db k) (fnil conj []) (d/entity db v)))
-             {}
-             result)
+           (map (partial map (partial d/entity db)) result)
 
            (not (or (variable? a) (variable? b)))
            ;; Truth check
@@ -210,3 +225,8 @@
   Aides in composition."
   ([tx] (transacte *conn* tx))
   ([conn tx] (some->> tx (d/transact conn) :tx-data ffirst (d/entity @conn))))
+
+(defn _invert
+  "Finds the input to a rule that satisfies result."
+  [result rule]
+  (rule '?x result))
