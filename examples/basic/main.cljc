@@ -5,7 +5,7 @@
 
 (j/defrule ancestor [?x]
   (or (:entity/parent ?x)
-      (:entity/parent (ancestor ?x))))
+      (ancestor (:entity/parent ?x))))
 
 (ancestor @s/conn 1)
 ;=> (#:db{:id 3} #:db{:id 2})
@@ -30,6 +30,9 @@
 (ancestor #:db{:id 1})
 ;=> (#:db{:id 3} #:db{:id 2})
 
+(map :entity/name (j/_invert [:entity/name "Justice"] ancestor))
+;=> ("Good Child" "Bad Child")
+
 (ancestor '?x 1)
 ;=> (#:db{:id 4} #:db{:id 5})
 
@@ -38,21 +41,32 @@
 
 (j/defrule descendant [?x]
   (or (:entity/_parent ?x)
-      (:entity/_parent (descendant ?x))))
+      (descendant (:entity/_parent ?x))))
+
 (map :entity/name (descendant 1))
 ;=> ("Good Child" "Bad Child")
 
+(map :entity/name (j/_invert 1 descendant))
+;=> ("Grandmother" "Mother")
+
 (ancestor)
-;=> {#:db{:id 4} [#:db{:id 3} #:db{:id 2} #:db{:id 1}],
-;    #:db{:id 2} [#:db{:id 3}],
-;    #:db{:id 5} [#:db{:id 3} #:db{:id 2} #:db{:id 1}],
-;    #:db{:id 1} [#:db{:id 3} #:db{:id 2}]}
+;=> ((#:db{:id 4} #:db{:id 3})
+;    (#:db{:id 2} #:db{:id 3})
+;    (#:db{:id 4} #:db{:id 2})
+;    (#:db{:id 5} #:db{:id 3})
+;    (#:db{:id 4} #:db{:id 1})
+;    (#:db{:id 5} #:db{:id 2})
+;    (#:db{:id 1} #:db{:id 3})
+;    (#:db{:id 5} #:db{:id 1})
+;    (#:db{:id 1} #:db{:id 2}))
+(ancestor '?x '?y)
 
 (ancestor 1 3)
 ;=> true
 
 (ancestor 1 5)
 ;=> false
+
 
 (j/defrule dead-ancestors [?x]
   (and (:entity/_death _)
