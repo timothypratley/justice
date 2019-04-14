@@ -1,6 +1,7 @@
 /target
 /classes
 /checkouts
+/cljs-test-runner-out
 profiles.clj
 pom.xml
 pom.xml.asc

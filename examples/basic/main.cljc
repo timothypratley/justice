@@ -3,10 +3,22 @@
             [basic.setup :as s]
             [justice.core :as j]))
 
-(j/defrule ancestor [?x]
-  (or (:entity/parent ?x)
-      (ancestor (:entity/parent ?x))))
+;; TODO: react components that receive entities and navigators
 
+;; TODO: maybe DCG??
+#_(j/def ancestor
+    (or (--> :entity/parent)
+        (--> :entity/parent ancestor)))
+
+;; TODO: support threading (maybe all macros??), doto? probably not
+#_(j/defrule ancestor [?x]
+  (or
+    (-> ?x :entity/parent)
+    (-> ?x :entity/parent ancestor)))
+
+(j/defrule ancestor [?x]
+   (or (:entity/parent ?x)
+       (ancestor (:entity/parent ?x))))
 (ancestor @s/conn 1)
 ;=> (#:db{:id 3} #:db{:id 2})
 
@@ -30,7 +42,7 @@
 (ancestor #:db{:id 1})
 ;=> (#:db{:id 3} #:db{:id 2})
 
-(map :entity/name (j/_invert [:entity/name "Justice"] ancestor))
+(map :entity/name (j/_ [:entity/name "Justice"] ancestor))
 ;=> ("Good Child" "Bad Child")
 
 (ancestor '?x 1)
@@ -46,7 +58,7 @@
 (map :entity/name (descendant 1))
 ;=> ("Good Child" "Bad Child")
 
-(map :entity/name (j/_invert 1 descendant))
+(map :entity/name (j/_ 1 descendant))
 ;=> ("Grandmother" "Mother")
 
 (ancestor)
@@ -59,14 +71,29 @@
 ;    (#:db{:id 1} #:db{:id 3})
 ;    (#:db{:id 5} #:db{:id 1})
 ;    (#:db{:id 1} #:db{:id 2}))
-(ancestor '?x '?y)
+
+(ancestor '?x '?result)
+; same as before
+
+(->>
+  (ancestor)
+  (map (partial map :entity/name))
+  (sort-by first))
+;=> (("Bad Child" "Grandmother")
+;    ("Bad Child" "Mother")
+;    ("Bad Child" "Justice")
+;    ("Good Child" "Grandmother")
+;    ("Good Child" "Mother")
+;    ("Good Child" "Justice")
+;    ("Justice" "Grandmother")
+;    ("Justice" "Mother")
+;    ("Mother" "Grandmother"))
 
 (ancestor 1 3)
 ;=> true
 
 (ancestor 1 5)
 ;=> false
-
 
 (j/defrule dead-ancestors [?x]
   (and (:entity/_death _)
