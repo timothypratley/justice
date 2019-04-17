@@ -13,11 +13,13 @@
   (string/starts-with? (name k) "_"))
 
 (defn- forward-keyword? [k]
-  (and (keyword? k)
+  (and
+    (keyword? k)
     (not (inverse? k))))
 
 (defn- inverse-keyword? [k]
-  (and (keyword? k)
+  (and
+    (keyword? k)
     (inverse? k)))
 
 (defn- forward

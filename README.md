@@ -1,7 +1,6 @@
 # Justice
 
 A [Clojure/Script](https://clojure.org/) library providing a concise rule query syntax for [Datalog](https://en.wikipedia.org/wiki/Datalog).
-Entity oriented programming.
 
 ![Lady Justice](https://cdn.dribbble.com/users/101244/screenshots/2921435/lady_justice.jpg)
 
@@ -24,10 +23,12 @@ Can be more concisely written as:
 
 Where the bridging variables P, G, and E don't need to be written as they are implied.
 
-Justice is a Lisp flavoured implementation of this syntax on top of DataScript,
-providing a concise way to create and query with rules.
+Justice is a Lisp flavoured implementation of this syntax fix for DataScript,
+providing concise queries and rules.
 
-Furthermore functional and entity style.
+A functional entity style of interacting with data is more akin to navigating than querying.
+Abstracting query as navigation removes a tedious layer of incidental complexity;
+the maintenance of queries and reshaping required to make use of them.
 
 
 ## Usage
@@ -37,7 +38,7 @@ I'd love to hear your suggestions.
 
 Add justice to your dependencies:
 
-    [justice "0.0.1-alpha"]
+    [justice "0.0.2-alpha"]
 
 See [examples](examples) for executable code described below.
 
@@ -102,10 +103,11 @@ You can read it informally as "find the ancestor of the parent of input x."
 
 The term `or` implies that either sub-clause will match with existing facts.
 
+Defining a rule creates a convenience function to query it with.
+
 
 ### Applying rules
 
-Rules are functions.
 Rules need a database in context to resolve against.
 There are two ways to pass in the database:
 
@@ -146,6 +148,7 @@ An Entity can be supplied instead of an entity id or lookup ref:
 The inputs and results of a rule application may also be a scalar values.
 The value of the attribute might be a string or a number.
 Justice uses the database schema to determine whether a relation is a ref or not.
+
 Prefer rules that take and return entities, as you can navigate to scalars conveniently using the entity pattern.
 
 
@@ -161,36 +164,72 @@ Clauses can be inverted with the `_` reverse lookup convention:
 
 This notation is consistent with Entity navigation.
 Given an Entity `e`, you can reverse lookup children of `e` with `(:entity/_parent e)`.
+This can be read informally as "Who has the parent e?"
+
+
+### Plain old queries
+
+Rules are cool when you want things like recursion and composition,
+but rules are not necessary for querying.
+
+    (j/find (:entity/parent (:entity/parent 1)))
+    ;=> (#:db{:id 3})
+
+`j/find` is a shorthand way to construct simple queries to find entities.
+Here we were able to concisely ask "Who is the grandparent of 1?".
+This is the same as:
+
+    (:entity/parent (:entity/parent (d/entity db 1)))
+
+However we can call logic and rules inside `j/find` expressions:
+
+    (j/find (and (:entity/parent (descendant 1))
+                 (:entity/_parent 3)))
+    ;=> (#:db{:id 2})
+
+We could save a find query into a function:
+
+    (defn grand-parent [x]
+      (j/find (:entity/parent (:entity/parent x)))
+
+But consider using `defrule` instead:
+
+    (defrule parent [?x]
+      (:entity/parent ?x))
+
+As they provide the same behavior, but rules are more flexible as we shall see soon.
 
 
 ### Query direction
 
-So far we have asked "who are the ancestors of Justice?"
+Previously we asked "Who are the ancestors of Justice?".
+Writing `(ancestor 1)` was actually shorthand for providing both sides of the relation:
+
+    (ancestor 1 '?result)
+
+We were able to leave `'?result` off because it is implied,
+and the advantage is that we can think of rules as behaving like a function.
+
 Now we shall ask "Who has Justice as an ancestor?"
 
-    (map :entity/name (j/_ [:entity/name "Justice"] ancestor))
+    (map :entity/name (ancestor '?x 1))
     ;=> ("Good Child" "Bad Child")
 
-This style makes it clear that `"Justice"` is a result, not an argument.
-We used `_` to put the result before the rule name in the expression.
-You can read this informally as "Find inputs that produce Justice from the ancestor rule."
-More formally you might read it as "Unify Justice with (ancestor ?x)".
+Here we are asking for the `?result` to be 1, for some `?x`.
 
-`(j/_ 1 ancestor)` is syntactic sugar for `(ancestor 1 '?result)`.
-See the "Relations" section for a detailed explanation.
+We can avoid providing both sides of the relation by reversing it:
 
-Rules can also be reversed when called from within another rule using the `_` reverse lookup convention:
-
-    (defrule descendant* [?x]
-      (or (:entity/_parent ?x)
-          (_ancestor (:entity/_parent ?x))))
-    (map :entity/name (descendant 1))
+    (map :entity/name (j/find (_ancestor [:entity/name "Justice"])))
     ;=> ("Good Child" "Bad Child")
+
+Rules can have their direction reversed, using the `_` reverse lookup convention,
+analogous to how attribute lookup can be reversed.
+This expression can be read informally as "Who has an ancestor named Justice?"
 
 
 ### Cartesian product
 
-Rules can be called with no arguments to get all possible answers based on existing facts:
+Rules can be called with no arguments at all to query all possible answers based on existing facts:
 
     (->>
       (ancestor)
@@ -235,17 +274,6 @@ this is not the case.
 What really happens here is that justice produces a set of dependent rules,
 which are used in a query.
 This is important to understand, as it explains why regular functions cannot appear in rules.
-
-
-### Warning: justice without mercy
-
-It is possible to express non-terminating recursive rules in justice,
-just as it is in Datalog.
-
-
-### When do I need a rule?
-
-Should I provide a `(j/rule)` equivalent to `(fn)`?
 
 
 ### Where clauses
@@ -352,11 +380,29 @@ the name indicates where the rule is defined in the source code.
 
 Justice provides `transacte` which behaves very similar to `d/transact!` but returns the first entity.
 
+`assox` operates on an entity to produce a transaction, transacts it, and returns a new entity.
+
+`updatex` operates on an entity to produce a transaction, transacts it, and returns a new entity.
+
+`dissox` operates on an entity to produce a transaction, transacts it, and returns a new entity.
+
+
+### Reacting to change
+
+Justice provides a `reactive` namespace with several helpers to assist listening to change.
+These are intended for use in React UIs, and similar scenarios.
+
+
+### Warning: justice without mercy
+
+It is possible to express non-terminating recursive rules in justice,
+just as it is in Datalog.
+
 
 ### Escaping the justice system
 
 The justice syntax is more concise than DataScript queries and handles several shorthand conventions.
-However, justice syntax is restricted in what can be expressed.
+These conventions restrict what can be expressed in a query.
 
 The `?result` symbol is special, it is always bound to the final result.
 
@@ -385,6 +431,11 @@ You can escape the result abstraction by calling the rule with it's full arity.
 
     (map :entity/name (ancestor '?x 1))
     ;=> ("Good Child" "Bad Child")
+
+And indeed you can call rules directly with whatever find clauses you want (see `apply-rule`).
+
+That said, I claim there is good reason to model data using binary relations and chaining results.
+This is explained further in the Relations section.
 
 
 ## How it works
@@ -420,12 +471,14 @@ Justice maintains a global rule registry of all rules created with `defrule`.
 
 ### Relations
 
-Strictly speaking, rules do not have results.
-The concept of a result for a rule is an abstraction.
+Strictly speaking, rules are not functions and do not produce results.
 Rules only have heads that define bindings and bodies that define relations.
+The concept of a result for a rule is an abstraction introduced to make them look like functions.
 
 The DataScript signature of the `ancestor` rule is `(ancestor ?descendant ?ancestor)`.
-The rule actually accepts 2 inputs! This is because rules define relations, not queries.
+The rule has 2 bindings!
+Rules define complex relations, not queries.
+We defined the `ancestor` relationship between two entities.
 The `ancestor` rule defines a relationship between `descendants` and `ancestors`.
 A query is formed by providing values that must be matched, or leaving variables unbound.
 We can choose to supply one input, all inputs, or none of the inputs.
@@ -582,6 +635,7 @@ Running the tests:
 - [ ] Check for left recursive forms.
 - [ ] Check for unused variables.
 - [ ] Find a way to make testable examples
+- [ ] Should defrule create a macro that can take ?x without quoting?
 
 
 ## License
