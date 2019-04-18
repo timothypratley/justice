@@ -29,14 +29,12 @@
              (:db/id e)
              e)]
     ;; constructor
-    (prn 'LISTEN id k)
     (d/listen! conn k
       (fn tx-listener [tx-report]
         (when (tx-relates-to-entity? id tx-report)
           (on-change (d/entity (:db-after tx-report) id)))))
     ;; destructor
     (fn cleanup-rentity []
-      (prn 'UNLISTEN id k)
       (d/unlisten! conn k))))
 
 (defn tx-contains-attribute? [attribute {:keys [tx-data]}]
