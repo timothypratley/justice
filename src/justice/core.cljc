@@ -34,8 +34,8 @@
 (defmacro with-conn
   "Provide a db connection to use for rule applications."
   [conn & body]
-  (assert (d/conn? conn) "Expects a Datascript connection")
   `(binding [*conn* ~conn]
+     (assert (d/conn? ~conn) "Expected a connection as first argument")
      ~@body))
 
 (defmacro trace
@@ -44,11 +44,42 @@
   `(binding [*trace* true]
      ~@body))
 
+(defn q
+  "Performs an adhoc query using justice syntax.
+  May call registered rules.
+  When calling registered rules, use the fully qualified name (`rule-name will work from within the same namespace).
+  May be recursive with the special name justice.core/q.
+  Use attach prior to calling, or provide a db as the first argument."
+  ([expr] (q @*conn* expr))
+  ([db expr]
+   (assert (d/db? db) "Expected a db as first argument.")
+   (let [q-rules (t/as-rules `q [] expr)
+         registry (assoc *rule-registry* `q q-rules)
+         rules (dependencies/relevant-rules `q registry)]
+     (when *trace*
+       (println "QUERY:")
+       (pprint/pprint
+         `(d/q
+            ~{:find '[[?result ...]]
+              :in '[$ %]
+              :where [(list `q '?result)]}
+            ~'db
+            ~rules)))
+     (let [result (d/q
+                    {:find '[[?result ...]]
+                     :in '[$ % _ _]
+                     :where [(list `q '?result)]}
+                    db
+                    rules)]
+       (for [id result]
+         (d/entity db id))))))
+
 (defn all-rules
   "Retrieves the all registered rules from the registry."
   []
   (vec (mapcat val *rule-registry*)))
 
+;; TODO: there should be a way to add a disjuctive clause to an existing rule.
 (defn register-rule
   "Adds a rule to the rule-registry.
   Converts body from justice syntax to DataScript syntax."
@@ -105,7 +136,7 @@
            (get x :db/id))
       x))
 
-(defn q
+(defn rule-query
   "Runs a rule query against a db using rules."
   [db rules rule-name args]
   (when *trace*
@@ -126,8 +157,8 @@
   ([rule-name db & args]
    (assert (qualified-symbol? rule-name) "rule-name should be a namespace qualified symbol")
    (assert (d/db? db) "Must provide a DataScript db")
-   (let [rules (all-rules) #_(dependencies/relevant-rules rule-name *rule-registry*)
-         result (q db rules rule-name args)
+   (let [rules (dependencies/relevant-rules rule-name *rule-registry*)
+         result (rule-query db rules rule-name args)
          ;; TODO: support ternary
          [a b] args]
      (cond

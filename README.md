@@ -10,7 +10,7 @@ A [Clojure/Script](https://clojure.org/) library providing a concise rule query 
 In his keynote,
 [Zeno and the tar pit](https://skillsmatter.com/skillscasts/12820-keynote-zeno-and-the-tar-pit),
 Christope Grand argues that Datalog is better for modeling data than maps,
-but that the syntax is cumbersome.
+but also more cumbersome.
 
 Christope presents a syntactic fix for rule application;
 
@@ -23,12 +23,13 @@ Can be more concisely written as:
 
 Where the bridging variables P, G, and E don't need to be written as they are implied.
 
-Justice is a Lisp flavoured implementation of this syntax fix for DataScript,
-providing concise queries and rules.
+Justice is an implementation of this syntax fix for DataScript.
 
-A functional entity style of interacting with data is more akin to navigating than querying.
+DataScript and Datomic provide a powerful entity abstraction.
+Justice offers a concise mechanism for constructing queries that return entities,
+and helpers to observe change that affects those entities.
 Abstracting query as navigation removes a tedious layer of incidental complexity;
-the maintenance of queries and reshaping required to make use of them.
+the maintenance of queries and transformations.
 
 
 ## Usage
@@ -40,20 +41,16 @@ Add justice to your dependencies:
 
     [justice "0.0.2-alpha"]
 
-See [examples](examples) for executable code described below.
+Add [DataScript](https://github.com/tonsky/datascript) to your dependencies.
+
+See [basic examples](examples/basic) for executable code described below.
 
 
 ### Setup (DataScript)
 
-Add [DataScript](https://github.com/tonsky/datascript) to your dependencies.
-
-Say we want to define an `ancestor` rule.
-We might start with some facts indicating who is a `parent` of who.
-And we want to say that an ancestor is a parent, or ancestor of a parent.
-
-Before we can define this rule we need to create a db schema and some test data to operate on.
-The schema defines an `:entity/parent` attribute.
-For this example an entity can have only one parent.
+First we need a schema and some data defined in order to create queries and rules.
+Let's start with some facts about people indicating who their parents are.
+To keep things simple for this example I will restrict people to only have one parent.
 
     (ns basic.setup
       (:require [datascript.core :as d]))
@@ -75,10 +72,16 @@ For this example an entity can have only one parent.
 
     (d/transact! conn seed)
 
-Now we are ready to define our rule.
+The schema defines an `:entity/parent` attribute.
+In the example data "Justice" has a parent named "Mother",
+who in turn has a parent named "Grandmother".
+"Good Child" and "Bad Child" both have "Justice" as their parent.
 
 
 ### Creating rules
+
+An ancestor of a person can be a parent, or the parent's ancestor.
+Let's create a rule that captures this relationship.
 
 Require justice from your code:
 
@@ -96,22 +99,22 @@ The notation `(:entity/parent ?x)` is consistent with using keywords as get func
 You can read this expression informally as "get the parent of input x."
 
 The clause `(ancestor (:entity/parent ?x))` implies a recursive application of the rule.
-If the input x has a parent, then that parent might have an ancestor.
-If this is true, then the final result will be the ancestor of the parent of x.
+If the input x has a parent, then the final result can be the ancestor of the parent of x.
 This notation is consistent with function application.
-You can read it informally as "find the ancestor of the parent of input x."
+You can read it informally as "the ancestor of the parent of input x."
 
-The term `or` implies that either sub-clause will match with existing facts.
+The term `or` implies that either clause will match with existing facts.
 
-Defining a rule creates a convenience function to query it with.
+Defining a rule adds it to a global, namespaced rules registry,
+and creates a convenience function of the same name to query it with.
 
 
 ### Applying rules
 
-Rules need a database in context to resolve against.
-There are two ways to pass in the database:
+`defrule` created a function that we can invoke.
+But we still need a database to resolve the rule against.
 
-Passing a database as the first argument:
+Passing a database as the first argument to a rule:
 
     (ancestor @s/conn 1)
     ;=> (#:db{:id 3} #:db{:id 2})
@@ -131,6 +134,11 @@ Entities provide a lazy, associative view of all the information that can be rea
     (map :entity/name (ancestor 1))
     ;=> ("Grandmother" "Mother")
     
+The input `1` is the entity id of "Justice".
+The results is 2 entities.
+Their names are "Grandmother" and "Mother".
+They are the ancestors of "Justice."
+
 Entities only pull attributes when you access them.
 To realize all attributes, use `d/touch`.
 When following relations, the result is another Entity.
@@ -148,13 +156,13 @@ An Entity can be supplied instead of an entity id or lookup ref:
 The inputs and results of a rule application may also be a scalar values.
 The value of the attribute might be a string or a number.
 Justice uses the database schema to determine whether a relation is a ref or not.
-
-Prefer rules that take and return entities, as you can navigate to scalars conveniently using the entity pattern.
+Prefer the creation of rules that take and return entities,
+as you can navigate to scalars conveniently using the entity pattern.
 
 
 ### Attribute direction
 
-Clauses can be inverted with the `_` reverse lookup convention:
+Clauses can be inverted with the `_relation` reverse lookup convention:
 
     (defrule descendant [?x]
       (or (:entity/_parent ?x)
@@ -163,41 +171,41 @@ Clauses can be inverted with the `_` reverse lookup convention:
     ;=> ("Good Child" "Bad Child")
 
 This notation is consistent with Entity navigation.
-Given an Entity `e`, you can reverse lookup children of `e` with `(:entity/_parent e)`.
-This can be read informally as "Who has the parent e?"
+Given an Entity `e`, you can find the children of `e` with `(:entity/_parent e)`.
+This can be read informally as "Who has parent e?"
 
 
 ### Plain old queries
 
-Rules are cool when you want things like recursion and composition,
-but rules are not necessary for querying.
+Rules are cool when you want recursion and composition,
+but rules are often not necessary for queries.
 
-    (j/find (:entity/parent (:entity/parent 1)))
+    (j/q (:entity/parent (:entity/parent 1)))
     ;=> (#:db{:id 3})
 
-`j/find` is a shorthand way to construct simple queries to find entities.
+`q` is a shorthand way to construct simple queries to find entities.
 Here we were able to concisely ask "Who is the grandparent of 1?".
 This is the same as:
 
     (:entity/parent (:entity/parent (d/entity db 1)))
 
-However we can call logic and rules inside `j/find` expressions:
+However we can use logic and rules inside `q` expressions:
 
-    (j/find (and (:entity/parent (descendant 1))
+    (j/q (and (:entity/parent (descendant 1))
                  (:entity/_parent 3)))
     ;=> (#:db{:id 2})
 
 We could save a find query into a function:
 
     (defn grand-parent [x]
-      (j/find (:entity/parent (:entity/parent x)))
+      (j/q (:entity/parent (:entity/parent x)))
 
 But consider using `defrule` instead:
 
     (defrule parent [?x]
       (:entity/parent ?x))
 
-As they provide the same behavior, but rules are more flexible as we shall see soon.
+Justice rules provide the same behavior as queries, but rules are more flexible.
 
 
 ### Query direction
@@ -219,7 +227,7 @@ Here we are asking for the `?result` to be 1, for some `?x`.
 
 We can avoid providing both sides of the relation by reversing it:
 
-    (map :entity/name (j/find (_ancestor [:entity/name "Justice"])))
+    (map :entity/name (j/q (_ancestor [:entity/name "Justice"])))
     ;=> ("Good Child" "Bad Child")
 
 Rules can have their direction reversed, using the `_` reverse lookup convention,
@@ -294,6 +302,12 @@ Justice does not produce "row" results (non-Entities).
 Results are intended to be either scalars or navigated using the Entity interface.
 Rows can be approximated with `(juxt :field1 :field2)`to produce a function that will call `:field1` and `:field2` on an Entity,
 but the Entity abstraction is preferable for both clarity and performance.
+
+Note that where one might otherwise want two separate Entities returned side by side,
+it is possible to instead split the query into two parts...
+Finding one of the Entities, and finding the related Entity.
+Keep in mind that this all reduces down to in memory map lookups,
+so splitting queries up does not necessarily imply extra overhead.
 
 
 ### Rule arity
@@ -471,19 +485,20 @@ Justice maintains a global rule registry of all rules created with `defrule`.
 
 ### Relations
 
+Datalog rules have heads that define bindings and bodies that define relationships between those bindings.
 Strictly speaking, rules are not functions and do not produce results.
-Rules only have heads that define bindings and bodies that define relations.
-The concept of a result for a rule is an abstraction introduced to make them look like functions.
 
 The DataScript signature of the `ancestor` rule is `(ancestor ?descendant ?ancestor)`.
-The rule has 2 bindings!
-Rules define complex relations, not queries.
-We defined the `ancestor` relationship between two entities.
-The `ancestor` rule defines a relationship between `descendants` and `ancestors`.
+The rule has 2 bindings.
+Rules define complex relationships, not queries.
+The `ancestor` rule defines a relationship between entities; between `descendants` and `ancestors`.
 A query is formed by providing values that must be matched, or leaving variables unbound.
 We can choose to supply one input, all inputs, or none of the inputs.
-The find clause of the query will be all unbound variables.
+The find clause of the query contains all unbound variables.
 The find clause is implied by the inputs we chose to supply.
+
+Results for a rule is an abstraction introduced to make them look like functions.
+Quite often this is a useful abstraction.
 
 You can escape the result abstraction by calling the rule with it's full arity.
 
@@ -503,6 +518,9 @@ The name `?x` chosen here does not matter, it can be any symbol starting with `?
 The convention of leaving off `?result` is followed to make rule application feel like function application.
 `_` is syntactic sugar to maintain the abstraction while using rule relations in reverse.
 
+
+### Rule arity
+
 Rules can have multiple arities, and `defrules` allows you to create these using `defn` syntax.
 When calling multi-arity rules, the convenience function for applying the rule resolves to the rule arity first.
 Let's look at an example:
@@ -519,18 +537,18 @@ There are a multitude of ways we can call the convenience function for this rule
     ;; the result of the single arity version (binary rule signature)
 
     (example 1 2)
-    ;; the result of the dual arity version (ternary rule signature)
+    ;; true/false of the single arity version (binary rule signature)
 
     (example 1 2 3)
     ;; true/false of the dual arity holds (ternary rule signature)
 
-    (j/_ 3 example)
+    (j/q (_example 3)
     ;; the single arity version (binary rule signature)
 
-    (j/_ 4 example 1)
+    (j/q (_example 4 1)
     ;; true/false of the single arity version (binary rule signature)
 
-    (j/_ 5 example 1 2)
+    (j/q (_example 1 2 5)
     ;; true/false of the dual arity holds (ternary rule signature)
 
     (example)
@@ -540,14 +558,13 @@ There are a multitude of ways we can call the convenience function for this rule
     ;; the cartesian product of the single arity version (binary rule signature)
 
     (example '?x 'y)
-    ;; the cartesian product of the dual arity version (ternary rule signature)
+    ;; the cartesian product of the single arity version (binary rule signature)
 
     (example '?x '?y '?z)
     ;; the cartesian product of the dual arity version (ternary rule signature)
 
     (example 1 '?x)
-    ;; equivalent to (example 1 '?x '?result)
-    ;; the dual arity version (ternary rule signature) is called
+    ;; the single arity version is called
 
 Datalog rules do not *have* to follow the hidden `?result` convention.
 Even justice rules don't have to follow it.
@@ -592,12 +609,12 @@ Restrictive "closed" style:
 Instead of "open" style:
 
     (ns this.ns)
-      (defrule my-rule [?x] body1)
-      (defrule my-rule [?x] body2)
+      (register-rule 'my-rule '[?x] body1)
+      (register-rule 'my-rule '[?x] body2)
     (ns that.ns)
-      (defrule my-rule [?x] body3)
-      (defrule my-rule [?x ?y] body4)
-      (defrule my-rule [?x ?y] body5)
+      (register-rule 'my-rule '[?x] body3)
+      (register-rule 'my-rule '[?x ?y] body4)
+      (register-rule 'my-rule '[?x ?y] body5)
 
 The problem with "open" rule definitions is uncertainty of the full definition.
 If part of the rule is defined in a different namespace that has not been loaded,
@@ -609,7 +626,7 @@ Fully defining rules as a single body per arity in a single namespace is avoids 
 The rule registry will always reflect the code.
 
 The main justice convention of `defrule` is intentionally "closed".
-However, the justice system is "open" to extension via modifying the global rule registry.
+However, the justice system is "open" to extension via `register-rule`.
 
 
 ## Developing
