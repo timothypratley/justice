@@ -39,7 +39,7 @@ I'd love to hear your suggestions.
 
 Add justice to your dependencies:
 
-    [justice "0.0.2-alpha"]
+    [justice "0.0.3-alpha"]
 
 Add [DataScript](https://github.com/tonsky/datascript) to your dependencies.
 
