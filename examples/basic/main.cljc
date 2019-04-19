@@ -42,15 +42,6 @@
 (ancestor #:db{:id 1})
 ;=> (#:db{:id 3} #:db{:id 2})
 
-(map :entity/name (j/_ [:entity/name "Justice"] ancestor))
-;=> ("Good Child" "Bad Child")
-
-(ancestor '?x 1)
-;=> (#:db{:id 4} #:db{:id 5})
-
-(map :entity/name (ancestor '?x 1))
-;=> ("Good Child" "Bad Child")
-
 (j/defrule descendant [?x]
   (or (:entity/_parent ?x)
       (descendant (:entity/_parent ?x))))
@@ -58,8 +49,26 @@
 (map :entity/name (descendant 1))
 ;=> ("Good Child" "Bad Child")
 
-(map :entity/name (j/_ 1 descendant))
-;=> ("Grandmother" "Mother")
+(j/q '(:entity/parent (:entity/parent 1)))
+;=> (#:db{:id 3})
+
+(j/q `(ancestor 1))
+;=> (#:db{:id 4} #:db{:id 5})
+
+
+;; TODO: make these work
+#_(j/trace
+  (j/q '(ancestor [:entity/name "Justice"])))
+#_(j/trace
+  (j/q '[?result :entity/parent [:entity/name "Justice"]]))
+#_(map :entity/name (j/q '(_ancestor 1)))
+;=> ("Good Child" "Bad Child")
+
+(ancestor '?x 1)
+;=> (#:db{:id 4} #:db{:id 5})
+
+(map :entity/name (ancestor '?x 1))
+;=> ("Good Child" "Bad Child")
 
 (ancestor)
 ;=> ((#:db{:id 4} #:db{:id 3})

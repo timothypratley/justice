@@ -25,10 +25,12 @@
                                :entity/name {:db/unique :db.unique/identity}})]
       (d/transact! conn [{:entity/name "Child"
                           :entity/parent {:entity/name "Parent"}}])
-      (is (seq (ancestor @conn 1))))))
+      (is (seq (ancestor @conn 1)))
+      (j/with-conn conn
+        (is (seq (ancestor 1)))))))
 
 (deftest trace-test
   (testing "trace prints the underlying query"
     (is (re-find #"QUERY"
                  (with-out-str
-                   (j/trace (j/q (d/empty-db) '[[(foo)]] 'foo [])))))))
+                   (j/trace (j/rule-query (d/empty-db) '[[(foo)]] 'foo [])))))))
