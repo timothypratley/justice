@@ -187,12 +187,17 @@ but rules are often not necessary for queries.
 Here we were able to concisely ask "Who is the grandparent of 1?".
 This is the same as:
 
-    (:entity/parent (:entity/parent (d/entity db 1)))
+    (:entity/parent (:entity/parent (d/entity @s/conn 1)))
+    ;=> #:db{:id 3}
 
 However we can use logic and rules inside `q` expressions:
 
-    (j/q (and (:entity/parent (descendant 1))
-                 (:entity/_parent 3)))
+    (j/q '(basic.main/ancestor (basic.main/descendant 1)))
+    ;=> (#:db{:id 3} #:db{:id 2} #:db{:id 1})
+
+    (j/q '(and
+            (:entity/parent 1)
+            (:entity/_parent 3)))
     ;=> (#:db{:id 2})
 
 We could save a find query into a function:

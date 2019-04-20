@@ -52,6 +52,17 @@
 (j/q '(:entity/parent (:entity/parent 1)))
 ;=> (#:db{:id 3})
 
+(:entity/parent (:entity/parent (d/entity @s/conn 1)))
+;=> #:db{:id 3}
+
+(j/q '(basic.main/ancestor (basic.main/descendant 1)))
+;=> (#:db{:id 3} #:db{:id 2} #:db{:id 1})
+
+(j/q '(and
+        (:entity/parent 1)
+        (:entity/_parent 3)))
+;=> (#:db{:id 2})
+
 (j/q `(ancestor 1))
 ;=> (#:db{:id 4} #:db{:id 5})
 

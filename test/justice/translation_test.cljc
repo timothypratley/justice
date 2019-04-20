@@ -93,6 +93,14 @@
       (= '(basic.main/ancestor ?result 1))
       (is "inverted fully qualified rule names are uninverted."))
 
+    (-> '(:entity/parent (_ancestor 1))
+      (t/datascript-rule-body)
+      (ungensym)
+      (= '(and
+            (ancestor ?bridge 1)
+            [?bridge :entity/parent ?result]))
+      (is "rules can be called inside triples"))
+
     (-> '[[rule-head
            (or :a :b)]]
       (t/datascript-rules)

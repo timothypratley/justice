@@ -30,10 +30,16 @@
 (def ^:private logic?
   #{'and 'or 'not})
 
-(defn ^:private rule-name? [x]
+(defn- variable? [x]
+  (or
+    (= x '_)
+    (string/starts-with? (name x) "?")))
+
+(defn- rule-name? [x]
   (and
     (symbol? x)
-    (not (logic? x))))
+    (not (logic? x))
+    (not (variable? x))))
 
 (defn- op? [x]
   (or
@@ -51,12 +57,13 @@
     (ident-vector? x)
     (and
       (not (vector? x))
-      (not (list? x)))))
+      (not (list? x))
+      (not (seq? x)))))
 
-(defn bridge-expr [r a b c]
+(defn bridge-expr [r t a b c]
   (let [bridge (gensym "?bridge_")]
     (list 'and
-      [a b bridge]
+      (t a b bridge)
       (if (keyword? r)
         [bridge r c]
         (list r bridge c)))))
@@ -83,12 +90,22 @@
     ;; => (and (my-rule ?x ?bridge) [?bridge :k2 ?result])
     (and (?r [?a ?b ?c])
       (guard (op? ?r)))
-    ~(bridge-expr ?r ?a ?b ?c)
+    ~(bridge-expr ?r vector ?a ?b ?c)
+
+    (and (?r (?a ?b ?c))
+      (guard (op? ?r))
+      (guard (op? ?a)))
+    ~(bridge-expr ?r list ?a ?b ?c)
 
     ;; keep adding more clauses as we move outward from the expression center
     (and (?r ('and . !clauses ... [?a ?b ?c]))
       (guard (op? ?r)))
-    ('and . !clauses ... ~@(rest (bridge-expr ?r ?a ?b ?c)))))
+    ('and . !clauses ... ~@(rest (bridge-expr ?r vector ?a ?b ?c)))
+
+    (and (?r ('and . !clauses ... (?a ?b ?c)))
+      (guard (op? ?r))
+      (guard (op? ?a)))
+    ('and . !clauses ... ~@(rest (bridge-expr ?r list ?a ?b ?c)))))
 
 (def uninverse-terms
   (comp
