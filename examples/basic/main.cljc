@@ -55,13 +55,13 @@
 (j/q `(ancestor 1))
 ;=> (#:db{:id 4} #:db{:id 5})
 
+(j/q `(ancestor [:entity/name "Justice"]))
+;=> (#:db{:id 3} #:db{:id 2})
 
-;; TODO: make these work
-#_(j/trace
-  (j/q '(ancestor [:entity/name "Justice"])))
-#_(j/trace
-  (j/q '[?result :entity/parent [:entity/name "Justice"]]))
-#_(map :entity/name (j/q '(_ancestor 1)))
+(j/q '[?result :entity/parent [:entity/name "Justice"]])
+;=> (#:db{:id 4} #:db{:id 5})
+
+(map :entity/name (j/q '(basic.main/_ancestor 1)))
 ;=> ("Good Child" "Bad Child")
 
 (ancestor '?x 1)

@@ -9,66 +9,70 @@
 
 (defn- inverse?
   "Names like :my.ns/_attribute indicates an inverse relationship."
-  [k]
-  (string/starts-with? (name k) "_"))
+  [r]
+  (string/starts-with? (name r) "_"))
 
-(defn- forward-keyword? [k]
-  (and
-    (keyword? k)
-    (not (inverse? k))))
-
-(defn- inverse-keyword? [k]
-  (and
-    (keyword? k)
-    (inverse? k)))
-
-(defn- forward
+(defn- uninverse
   "DataScript triple clauses cannot contain inverse relationship keywords, convert them."
-  [k]
-  ;; TODO: make work with rule names and unqualified keywords
-  (keyword (subs (string/replace (str k) #"/_" "/") 1)))
+  [r]
+  (cond (simple-keyword? r)
+        (keyword (subs (name r) 1))
 
-(defn- inverse [k]
-  ;; TODO: make work with rule names and unqualified keywords
-  (keyword (subs (string/replace (str k) #"/" "/_") 1)))
+        (qualified-keyword? r)
+        (keyword (namespace r) (subs (name r) 1))
 
-(def ^:private logic-terms
+        (simple-symbol? r)
+        (symbol (subs (name r) 1))
+
+        (qualified-symbol? r)
+        (symbol (namespace r) (subs (name r) 1))))
+
+(def ^:private logic?
   #{'and 'or 'not})
 
-(def ^:private rule-term?
-  (complement logic-terms))
+(defn ^:private rule-name? [x]
+  (and
+    (symbol? x)
+    (not (logic? x))))
 
-(defn- term? [x]
-  (or (keyword? x) (rule-term? x)))
+(defn- op? [x]
+  (or
+    (keyword? x)
+    (rule-name? x)))
 
-(defn- forward-rule? [term]
-  (and (rule-term? term)
-    (not (inverse? term))))
+(defn- ident-vector? [x]
+  (and
+    (vector? x)
+    (= 2 (count x))
+    (keyword? (first x))))
 
-(defn- inverse-rule? [term]
-  (and (rule-term? term)
-    (inverse? term)))
+(defn- ground? [x]
+  (or
+    (ident-vector? x)
+    (and
+      (not (vector? x))
+      (not (list? x)))))
 
-(defn- xor [a b]
-  (and (or a b)
-    (not (and a b))))
+(defn bridge-expr [r a b c]
+  (let [bridge (gensym "?bridge_")]
+    (list 'and
+      [a b bridge]
+      (if (keyword? r)
+        [bridge r c]
+        (list r bridge c)))))
 
-(def datascript-rule-body
+(def bridge-terms
   "Converts justice rule syntax into DataScript bridged triple syntax."
   (rewrite-all
     ;; base case; link to the ?result to be found
     ;; keyword get style (:some/attribute ?x)
     ;; translates to a DataScript triple clause [?x :some/attribute ?result]
-    (and (?a ?b)
-      (guard (term? ?a))
-      (guard (not (seqable? ?b))))
-    ~(if (keyword? ?a)
-       (if (inverse? ?a)
-         ['?result (forward ?a) ?b]
-         [?b ?a '?result])
-       (if (inverse? ?a)
-         (list ?a ?b '?result)
-         (list ?a '?result ?b)))
+    (and (?r ?x)
+      (guard (op? ?r))
+      (guard (ground? ?x)))
+    ~(if (keyword? ?r)
+       [?x ?r '?result]
+       (list ?r ?x '?result))
 
     ;; expand nested call syntax
     ;; to a bridged pair of DataScript triple clauses:
@@ -77,51 +81,34 @@
     ;; or bridged rule application:
     ;; (:k2 (my-rule ?x))
     ;; => (and (my-rule ?x ?bridge) [?bridge :k2 ?result])
-    (and (?new [?a ?b ?c])
-      (guard (term? ?new)))
-    ~(let [bridge (gensym "?bridge_")]
-       (list 'and
-         [?a ?b bridge]
-         (if (keyword? ?new)
-           (if (inverse? ?new)
-             [?c (forward ?new) bridge]
-             [bridge ?new ?c])
-           (if (xor (= '?result ?c) (inverse? ?new))
-             (list ?new bridge ?c)
-             (list ?new ?c bridge)))))))
+    (and (?r [?a ?b ?c])
+      (guard (op? ?r)))
+    ~(bridge-expr ?r ?a ?b ?c)
 
-;; TODO:
+    ;; keep adding more clauses as we move outward from the expression center
+    (and (?r ('and . !clauses ... [?a ?b ?c]))
+      (guard (op? ?r)))
+    ('and . !clauses ... ~@(rest (bridge-expr ?r ?a ?b ?c)))))
+
+(def uninverse-terms
+  (comp
+    (rewrite-all
+      (and [?x ?r ?y]
+        (guard (inverse? ?r)))
+      [?y ~(uninverse ?r) ?x])
+    (rewrite-all
+      (and (?r ?x ?y)
+        (guard (rule-name? ?r))
+        (guard (inverse? ?r)))
+      (~(uninverse ?r) ?y ?x))))
+
+(def datascript-rule-body
+  (comp uninverse-terms bridge-terms))
+
+;; TODO: provide a way to convert clauses to justice
 #_(def to-justice
     "Converts DataScript rule syntax into justice syntax."
-    (rewrite-all
-      ;; base case; link to the ?result to be found
-      ;; keyword get style (:some/attribute ?x)
-      ;; translates to a DataScript triple clause [?x :some/attribute ?result]
-      [?e ?a '?result]
-      (?a ?e)
-
-      ['?result ?a ?v]
-      (~(inverse ?a) ?v)
-
-      ;; expand nested call syntax
-      ;; to a bridged pair of DataScript triple clauses:
-      ;; (:k2 (:k1 ?x))
-      ;; => (and [?x :k1 ?bridge] [?bridge :k2 ?result])
-      ;; or bridged rule application:
-      ;; (:k2 (my-rule ?x))
-      ;; => (and (my-rule ?x ?bridge) [?bridge :k2 ?result])
-      (let [bridge (gensym "?bridge_")]
-        (list 'and
-          [?a ?b bridge]
-          (if (keyword? ?new)
-            (if (inverse-keyword? ?new)
-              [?c (forward-keyword? ?new) bridge]
-              [bridge ?new ?c])
-            (if (= '?result ?c)
-              (list ?new bridge ?c)
-              (list ?new ?c bridge)))))
-      (and (?new [?a ?b ?c])
-        (guard (not (contains? logic-terms ?new))))))
+    (rewrite-all ...))
 
 (defn datascript-rule
   "A DataScript rule consists of a head describing the name/inputs, and clauses in tripple syntax."
@@ -151,7 +138,7 @@
   (rewrite-all
     (and (?s . !args ...)
       (guard (and (symbol? ?s)
-               (not (contains? logic-terms ?s))
+               (not (contains? logic? ?s))
                (not (qualified-symbol? ?s)))))
     (~(symbol current-ns-str (name ?s)) . !args ...)))
 
