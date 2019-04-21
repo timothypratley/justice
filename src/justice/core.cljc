@@ -45,7 +45,7 @@
      ~@body))
 
 (defn q
-  "Performs an adhoc query using justice syntax.
+  "Performs a query using justice syntax.
   May call registered rules.
   When calling registered rules, use the fully qualified name (`rule-name will work from within the same namespace).
   May be recursive with the special name justice.core/q.
@@ -67,12 +67,14 @@
             ~rules)))
      (let [result (d/q
                     {:find '[[?result ...]]
-                     :in '[$ % _ _]
+                     :in '[$ %]
                      :where [(list `q '?result)]}
                     db
                     rules)]
-       (for [id result]
-         (d/entity db id))))))
+       (if (t/entity-result? db rules `q ['?result])
+         (for [id result]
+           (d/entity db id))
+         result)))))
 
 (defn all-rules
   "Retrieves the all registered rules from the registry."
@@ -159,20 +161,26 @@
    (assert (d/db? db) "Must provide a DataScript db")
    (let [rules (dependencies/relevant-rules rule-name *rule-registry*)
          result (rule-query db rules rule-name args)
+         want-entities (t/entity-result? db rules rule-name args)
          ;; TODO: support ternary
          [a b] args]
      (cond
        ;; Cartesian product
        (and (variable? a) (variable? b))
-       (map (partial map (partial d/entity db)) result)
+       ;; TODO: need to check both variables and maybe entity on either
+       (if want-entities
+         (map (partial map #(d/entity db %)) result)
+         result)
 
        ;; Truth check
        (not (or (variable? a) (variable? b)))
        (boolean (seq result))
 
        :else
-       (for [id result]
-         (d/entity db id))))))
+       (if want-entities
+         (for [id result]
+           (d/entity db id))
+         result)))))
 
 (defn db
   "Returns the currently attached connection db if present,

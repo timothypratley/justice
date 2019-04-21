@@ -39,7 +39,7 @@ I'd love to hear your suggestions.
 
 Add justice to your dependencies:
 
-    [justice "0.0.3-alpha"]
+    [justice "0.0.4-alpha"]
 
 Add [DataScript](https://github.com/tonsky/datascript) to your dependencies.
 
@@ -644,20 +644,11 @@ Running the tests:
     clojure -Acljs-test
 
 
-## Todo
+## Open questions
 
-- [ ] Support Datomic as well as DataScript.
 - [ ] Should rules allow multiple input variables? `(defrule r [?x ?y] ...)`
 - [ ] Should there be a way for rules to produce rows? (non-entity results)
       -- I don't think so, the whole point is to stick with entities?
-- [ ] Is there be a concise syntax for updates?
-      -- `d/transact!` is already pretty great?
-      -- Entity versions of assoc/dissoc/update?
-- [ ] Provide syntax checking and nice error messages!!!
-- [ ] Check for left recursive forms.
-- [ ] Check for unused variables.
-- [ ] Find a way to make testable examples
-- [ ] Should defrule create a macro that can take ?x without quoting?
 
 
 ## License

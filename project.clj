@@ -1,4 +1,4 @@
-(defproject justice "0.0.3-alpha"
+(defproject justice "0.0.4-alpha"
   :description "Concise rule definition and query syntax for DataScript"
   :url "https://github.com/timothypratley/justice"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"

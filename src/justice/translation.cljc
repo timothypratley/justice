@@ -60,7 +60,7 @@
       (not (list? x))
       (not (seq? x)))))
 
-(defn bridge-expr [r t a b c]
+(defn- bridge-expr [r t a b c]
   (let [bridge (gensym "?bridge_")]
     (list 'and
       (t a b bridge)
@@ -68,7 +68,7 @@
         [bridge r c]
         (list r bridge c)))))
 
-(def bridge-terms
+(def ^:private bridge-terms
   "Converts justice rule syntax into DataScript bridged triple syntax."
   (rewrite-all
     ;; base case; link to the ?result to be found
@@ -107,7 +107,7 @@
       (guard (op? ?a)))
     ('and . !clauses ... ~@(rest (bridge-expr ?r list ?a ?b ?c)))))
 
-(def uninverse-terms
+(def ^:private uninverse-terms
   (comp
     (rewrite-all
       (and [?x ?r ?y]
@@ -119,7 +119,8 @@
         (guard (inverse? ?r)))
       (~(uninverse ?r) ?y ?x))))
 
-(def datascript-rule-body
+(def from-justice
+  "Translates justice syntax to bridged triples"
   (comp uninverse-terms bridge-terms))
 
 ;; TODO: provide a way to convert clauses to justice
@@ -132,7 +133,7 @@
   [relation-name args body]
   (assert (qualified-symbol? relation-name) "relation-name should be a namespace qualified symbol")
   [(list* relation-name (conj args '?result))
-   (datascript-rule-body body)])
+   (from-justice body)])
 
 ;; TODO: (and (or ...)))
 ;; Un-nesting completely would require creating new rules as bridges... which is totally possible.
@@ -165,3 +166,38 @@
     (-> [(datascript-rule qualified-rule-name args body)]
       (datascript-rules)
       (qualify))))
+
+(defn entity-result?
+  "Walks the query to find attributes joining to result.
+  If there are any non-entity joins, returns false.
+  Checks the db schema when result appears in the value position,
+  where it must have a :db/valueType :db.type/ref."
+  [db rules rule-name args]
+  (let [result-variable (last args)
+        match-rule #(and
+                      (= (ffirst %) rule-name)
+                      (= (dec (count (first %))) (count args)))
+        matching-rules (filter match-rule rules)
+        other-rules (remove match-rule rules)
+        entity-result-clause?
+        (m/choice
+          (m/rewrite
+            [~result-variable ?a ?v]
+            true)
+          (m/rewrite
+            [?e ?a ~result-variable]
+            ~(if (= :db.type/ref (get-in db [:schema ?a :db/valueType]))
+               true
+               false))
+          ;; TODO: do other arities need to be considered?
+          (m/rewrite
+            (?r ?x ~result-variable)
+            ~(entity-result? db other-rules ?r [?x result-variable]))
+          (m/rewrite
+            (?r ~result-variable ?x)
+            ~(entity-result? db other-rules ?r [result-variable ?x]))
+          (m/rewrite _ true))]
+    (every? true?
+      (for [[head & body] matching-rules
+            clause body]
+        (entity-result-clause? clause)))))
