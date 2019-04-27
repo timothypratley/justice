@@ -218,10 +218,10 @@
        ~@(register-rule* current-ns-str parsed)
        ~(defn/define-defn parsed))))
 
-(defmacro defrule
-  "Registers a rule and sets up a convenience function to invoke that rule."
+(defmacro defq
+  "Registers a rule and sets up a convenience function to invoke that rule as a query."
   ([rule-name-short args body]
-   `(defrule ~rule-name-short nil ~args ~body))
+   `(defq ~rule-name-short nil ~args ~body))
   ([rule-name-short docstring args body]
    (let [current-ns (or
                       (some-> *ns* ns-name)

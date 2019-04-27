@@ -2,7 +2,8 @@
   (:require [clojure.test :refer [deftest is testing]]
             [justice.translation :as t]
             [clojure.string :as string]
-            [datascript.core :as d]))
+            [datascript.core :as d]
+            [meander.strategy.gamma :as m]))
 
 (def ungensym
   (t/rewrite-all
@@ -13,9 +14,58 @@
 
 (deftest uninverse-test
   (testing "symbols and keywords from inverse to forward style"
-    (is (= :k (@#'t/uninverse :_k)))
-    (is (= 'ancestor (@#'t/uninverse '_ancestor)))
-    (is (= 'foo.bar/ancestor (@#'t/uninverse 'foo.bar/_ancestor)))))
+    (is (= :k (@#'t/inverse :_k)))
+    (is (= :_k (@#'t/inverse :k)))
+    (is (= :a/k (@#'t/inverse :a/_k)))
+    (is (= :a/_k (@#'t/inverse :a/k)))
+    (is (= 'ancestor (@#'t/inverse '_ancestor)))
+    (is (= '_ancestor (@#'t/inverse 'ancestor)))
+    (is (= 'foo.bar/ancestor (@#'t/inverse 'foo.bar/_ancestor)))
+    (is (= 'foo.bar/_ancestor (@#'t/inverse 'foo.bar/ancestor)))))
+
+(deftest pattern-matching-expansions-test
+  (testing "pattern matching syntax"
+
+    (-> '{:foo/bar ?x}
+      (t/from-justice)
+      (= '[?result :foo/bar ?x])
+      (is "justice translates entity pattern matching style to bridged triples"))
+
+    (-> '{:k4 {:k3 {:k2 {:k1 ?x}}}}
+      (t/from-justice)
+      (ungensym)
+      (= '(and
+            [?bridge :k1 ?x]
+            [?bridge :k2 ?bridge]
+            [?bridge :k3 ?bridge]
+            [?result :k4 ?bridge]))
+      (is "justice translates deeply nested patterns"))
+
+    (-> '{:k2 {:k1 ?x}
+          :k4 {:k3 ?x}}
+      (t/from-justice)
+      (ungensym)
+      (= '(and
+            [?bridge :k1 ?x]
+            [?result :k2 ?bridge]
+            [?bridge :k3 ?x]
+            [?result :k4 ?bridge]))
+      (is "justice translates function application style to bridged triples"))
+
+    (-> '{:foo/bar ?result}
+      (t/from-justice)
+      (= '[_ :foo/bar ?result])
+      (is "justice allows using a different special ?result target, base is removed"))
+
+    (-> '{:entity/parent {:entity/parent [:entity/name "Grandmother"]}
+          :entity/name ?result}
+      (t/from-justice)
+      (ungensym)
+      (= '(and
+            [?bridge :entity/parent [:entity/name "Grandmother"]]
+            [?justice-pattern-base :entity/parent ?bridge]
+            [?justice-pattern-base :entity/name ?result]))
+      (is "justice handles nested use of ?result, where base cannot be removed"))))
 
 (deftest datascript-rule-expansions-test
   (testing "syntax transformations from justice to datascript"
@@ -24,6 +74,11 @@
       (= '[(translation-test/rule-name ?x ?result)
            [?x :entity/parent ?result]])
       (is "justice 'get keyword' style translates to Datascript 'relate to result' style"))
+
+    (-> '(:foo/bar 1)
+      (t/from-justice)
+      (= '[1 :foo/bar ?result])
+      (is "justice translates function application style to bridged triples"))
 
     (-> '(:foo/bar ?x)
       (t/from-justice)
@@ -120,6 +175,12 @@
       (= '[[rule-head :a :b]])
       (is "and expressions transform to conjunction clauses"))))
 
+(deftest as-rules-test
+  (is (= '[[(justice.translation-test/q
+             ?result)
+            [1 :entity/parent ?result]]]
+        (t/as-rules `q [] '(:entity/parent 1)))))
+
 (deftest entity-result?-test
   (testing "can detect scalars from schema"
     (let [schema {:entity/parent {:db/valueType :db.type/ref}}
@@ -158,3 +219,72 @@
         (is (= false
               (t/entity-result? @conn rules rule-name args))
           "query is for scalar results")))))
+
+(deftest rearrange-logic-test
+  (testing "Logic rearrangement and simplification to match Datalog `or` on outside rule convention"
+    (-> '(:a :b :c (:d :e))
+      (#'t/rearrange-logic)
+      (= '(:a :b :c (:d :e)))
+      (is "non-logic expressions are preserved"))
+
+    (-> '(and :a (and :b) :c)
+      (#'t/rearrange-logic)
+      (= '(and :a :b :c))
+      (is "nested commutative logic is raised"))
+
+    (-> '(or :a (or :b :c) :d)
+      (#'t/rearrange-logic)
+      (= '(or :a :b :c :d))
+      (is "nested commutative logic is raised"))
+
+    (-> '(or :a (and :b) :c)
+      (#'t/rearrange-logic)
+      (= '(or :a :b :c))
+      (is "identity logic expressions are flattened"))
+
+    (-> '(and :a (or :b) :c)
+      (#'t/rearrange-logic)
+      (= '(and :a :b :c))
+      (is "idenity logic expressions are flattened"))
+
+    (-> '(or :a (and :b :c) :d)
+      (#'t/rearrange-logic)
+      (= '(or :a (and :b :c) :d))
+      (is "keeps `or` on the outside, and `and` on the inside to match Datalog rule convention"))
+
+    (-> '(and :a (or :b :c) :d)
+      (#'t/rearrange-logic)
+      (= '(or
+            (and :a :b :d)
+            (and :a :c :d)))
+      (is "moves `or` to the outside, and `and` to the inside to match Datalog rule convention"))
+
+    (-> '(not (not :a))
+      (#'t/rearrange-logic)
+      (= :a)
+      (is "double negatives are removed"))
+
+    (-> '(not (or :a :b))
+      (#'t/rearrange-logic)
+      (= '(and (not :a) (not :b)))
+      (is "moves `or` to the outside, and `not` to the inside to match Datalog rule convention"))
+
+    (-> '(not (and :a :b))
+      (#'t/rearrange-logic)
+      (= '(or (not :a) (not :b)))
+      (is "moves `and` to the outside, and `not` to the inside to match Datalog rule convention"))
+
+    (-> '(not (not :a))
+      (#'t/rearrange-logic)
+      (= :a)
+      (is "double negatives are removed"))
+
+    ;; TODO: moving not inside (and complex)
+
+
+    (-> '(and :c (or :d (not (not (:a :b)))))
+      (#'t/rearrange-logic)
+      (= '(or
+            (and :c :d)
+            (and :c (:a :b))))
+      (is "complex combinations are resolved"))))
