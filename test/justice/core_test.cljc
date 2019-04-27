@@ -14,7 +14,7 @@
 
 (deftest defrule-test
   (testing "defrule behaves like defn"
-    (j/defrule ancestor [?x]
+    (j/defq ancestor [?x]
       (or (:entity/parent ?x)
         (ancestor (:entity/parent ?x))))
     (is (fn? ancestor))

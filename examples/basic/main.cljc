@@ -11,18 +11,87 @@
         (--> :entity/parent ancestor)))
 
 ;; TODO: support threading (maybe all macros??), doto? probably not
-#_(j/defrule ancestor [?x]
+#_(j/defq ancestor [?x]
   (or
     (-> ?x :entity/parent)
     (-> ?x :entity/parent ancestor)))
 
-(j/defrule ancestor [?x]
+(j/q @s/conn {:entity/parent 1})
+;=> (#:db{:id 4} #:db{:id 5})
+
+(j/attach s/conn)
+
+;; TODO: this should be possible? (short-cut for d/entity db id)
+#_(j/q 1)
+#_(j/q [:entity/name "Justice"])
+#_(j/q {:db/id 1})
+
+(j/q {:entity/parent 1})
+;=> (#:db{:id 4} #:db{:id 5})
+
+(map :entity/name (j/q {:entity/parent 1}))
+;=> ("Good Child" "Bad Child")
+
+(j/q {:entity/parent [:entity/name "Justice"]})
+
+(j/q {:entity/parent {:db/id 1}})
+
+(j/q {:entity/parent 1
+      :entity/name "Good Child"})
+;=> (#:db{:id 4})
+
+(j/q '{:entity/name ?result})
+;=> ["Good Child" "Grandmother" "Bad Child" "Justice" "Mother"]
+
+(j/q '{:entity/parent {:entity/parent {:entity/name "Grandmother"}}
+       :entity/name ?result})
+
+(j/q '{:entity/parent {:entity/parent [:entity/name "Grandmother"]}
+       :entity/name ?result})
+;=> ["Justice"]
+
+(j/trace
+  (j/q '{:entity/name "Justice"
+         :entity/parent {:entity/parent {:entity/name "Grandmother"}
+                         :entity/name ?result}}))
+
+
+(j/q '(:entity/name {:entity/parent 1}))
+
+(j/q '(:entity/name _))
+
+
+;; TODO:
+(j/defq desc [?x]
+  {:entity/parent (or ?x (desc ?x))})
+
+(j/trace
+  (desc 1))
+
+;; TODO: this should be possible:
+(j/trace
+  (j/q {:entity/name '?result
+        :entity/parent 1}))
+
+(j/defq ancestor [?x]
    (or (:entity/parent ?x)
        (ancestor (:entity/parent ?x))))
 (ancestor @s/conn 1)
 ;=> (#:db{:id 3} #:db{:id 2})
 
-(j/attach s/conn)
+(j/defq anc [?x]
+  (or
+    {:entity/parent ?result}
+    (anc {:entity/parent ?result})))
+
+(j/defq des [?x]
+  {:entity/parent (or ?x (des ?x))})
+
+(j/defq des [?x]
+  (or
+    {:entity/parent ?x}
+    (des {:entity/parent ?x})))
+
 (ancestor 1)
 ;=> (#:db{:id 3} #:db{:id 2})
 
@@ -42,7 +111,7 @@
 (ancestor #:db{:id 1})
 ;=> (#:db{:id 3} #:db{:id 2})
 
-(j/defrule descendant [?x]
+(j/defq descendant [?x]
   (or (:entity/_parent ?x)
       (descendant (:entity/_parent ?x))))
 
@@ -71,6 +140,13 @@
 
 (j/q '[?result :entity/parent [:entity/name "Justice"]])
 ;=> (#:db{:id 4} #:db{:id 5})
+
+;; Get all entities:
+(j/q '(:entity/_name _))
+;=> (#:db{:id 4} #:db{:id 3} #:db{:id 5} #:db{:id 2} #:db{:id 1})
+
+(j/q '(:entity/name _))
+;=> ["Good Child" "Grandmother" "Bad Child" "Justice" "Mother"]
 
 (map :entity/name (j/q '(basic.main/_ancestor 1)))
 ;=> ("Good Child" "Bad Child")
@@ -115,13 +191,13 @@
 (ancestor 1 5)
 ;=> false
 
-(j/defrule dead-ancestors [?x]
+(j/defq dead-ancestors [?x]
   (and (:entity/_death _)
        (ancestor ?x)))
 (map :entity/name (dead-ancestors [:entity/name "Justice"]))
 ;=> ("Grandmother")
 
-(j/defrule ancestor* [?x]
+(j/defq ancestor* [?x]
   (or [?x :entity/parent ?result]
       (and [?x :entity/parent ?z]
            (ancestor* ?z ?result))))

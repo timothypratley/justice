@@ -12,20 +12,17 @@
   [r]
   (string/starts-with? (name r) "_"))
 
-(defn- uninverse
+(defn- inverse
   "DataScript triple clauses cannot contain inverse relationship keywords, convert them."
   [r]
-  (cond (simple-keyword? r)
-        (keyword (subs (name r) 1))
-
-        (qualified-keyword? r)
-        (keyword (namespace r) (subs (name r) 1))
-
-        (simple-symbol? r)
-        (symbol (subs (name r) 1))
-
-        (qualified-symbol? r)
-        (symbol (namespace r) (subs (name r) 1))))
+  (let [rns (namespace r)
+        rname (name r)
+        inverse-name (if (string/starts-with? rname "_")
+                       (subs rname 1)
+                       (str "_" rname))]
+    (if (keyword? r)
+      (keyword rns inverse-name)
+      (symbol rns inverse-name))))
 
 (def ^:private logic?
   #{'and 'or 'not})
@@ -71,15 +68,35 @@
 (def ^:private bridge-terms
   "Converts justice rule syntax into DataScript bridged triple syntax."
   (rewrite-all
+    ;; This is an entity, we only want the id
+    {:db/id (pred integer? ?id)}
+    ?id
+
+    ;; base case for patterns
+    ;; don't bother with and for single map
+    {?k ?v :as ?m}
+    ~(if (> (count ?m) 1)
+       (cons 'and (for [[k v] ?m]
+                    (list (inverse k) v)))
+       (list (inverse ?k) ?v))
+
+    #_(and {!r !x}
+        (guard (op? !r))
+        (guard (ground? !x)))
+    #_('and . ($ ~f [!x !r]) ...)
+
+    ;;; TODO: everything in an and should be linked
+
     ;; base case; link to the ?result to be found
     ;; keyword get style (:some/attribute ?x)
     ;; translates to a DataScript triple clause [?x :some/attribute ?result]
+    ;; TODO: base may join
     (and (?r ?x)
       (guard (op? ?r))
       (guard (ground? ?x)))
     ~(if (keyword? ?r)
-       [?x ?r '?result]
-       (list ?r ?x '?result))
+       [?x ?r '?justice-pattern-base]
+       (list ?r ?x '?justice-pattern-base))
 
     ;; expand nested call syntax
     ;; to a bridged pair of DataScript triple clauses:
@@ -108,20 +125,70 @@
     ('and . !clauses ... ~@(rest (bridge-expr ?r list ?a ?b ?c)))))
 
 (def ^:private uninverse-terms
-  (comp
-    (rewrite-all
-      (and [?x ?r ?y]
-        (guard (inverse? ?r)))
-      [?y ~(uninverse ?r) ?x])
-    (rewrite-all
-      (and (?r ?x ?y)
-        (guard (rule-name? ?r))
-        (guard (inverse? ?r)))
-      (~(uninverse ?r) ?y ?x))))
+  (rewrite-all
+    (and [?x ?r ?y]
+      (guard (inverse? ?r)))
+    [?y ~(inverse ?r) ?x]
+
+    (and (?r ?x ?y)
+      (guard (rule-name? ?r))
+      (guard (inverse? ?r)))
+    (~(inverse ?r) ?y ?x)))
+
+(def ^:private rearrange-logic
+  (rewrite-all
+    ;; nested commutative logic is raised
+    ((pred #{'and 'or} ?op) . !before ... (?op . !clauses ...) . !after ...)
+    (                  ?op  . !before ...        !clauses ...    !after ...)
+
+    ;; moves `or` to the outside, and `and` to the inside to match Datalog rule convention
+    ('and . !before ... ('or  . !clauses ...) . !after ...)
+    ('or  . ('and . ~@!before . !clauses . ~@!after)   ...)
+
+    ;; identity logic expressions are flattened
+    ((pred #{'and 'or} ?op) ?body)
+    ?body
+
+    ;; double negatives are removed
+    ('not ('not ?body))
+    ?body
+
+    ;; moves `not` inside to match Datalog rule convention
+    ('not ('or . !clauses ...))
+    ('and . ('not !clauses) ...)
+    ('not ('and . !clauses ...))
+    ('or . ('not !clauses) ...)))
+
+(defn- count-occurrences
+  "Returns how many times sym appears in expression"
+  [expression]
+  (->> expression
+    (tree-seq sequential? seq)
+    (frequencies)))
+
+(defn- replace-base [expr sym]
+  ((rewrite-all '?justice-pattern-base ~sym) expr))
+
+(defn- maybe-replace-base-clause
+  "The base of a justice expression may be replaced by ?result for querying,
+  but only if an explicit ?result was not specified in the pattern.
+  If no ?result was specified, then we replace base with ?result,
+  otherwise base can be removed.
+  This is special behavior for the ?result symbol."
+  [expression]
+  (let [{result-count '?result
+         base-count '?justice-pattern-base
+         :or {result-count 0 base-count 0}}
+        (count-occurrences expression)]
+    (if (> result-count 0)
+      (if (> base-count 1)
+        expression
+        (replace-base expression '_))
+      (replace-base expression '?result))))
 
 (def from-justice
   "Translates justice syntax to bridged triples"
-  (comp uninverse-terms bridge-terms))
+  (comp maybe-replace-base-clause rearrange-logic uninverse-terms bridge-terms))
 
 ;; TODO: provide a way to convert clauses to justice
 #_(def to-justice
@@ -141,14 +208,15 @@
 (def datascript-rules
   "Converts justice and/or syntax to DataScript conjunction/disjunction syntax."
   (rewrite-all
+    ;; TODO: ands ands ands
     ;; `and` expressions: [rule-head (and clause1 clause2)]
     ;; translates to conjunctive form: [rule-head clause1 clause2]
     [!before ... [?head (~'and . !clauses ...)] . !after ...]
-    [!before ... [?head . !clauses ...] ...       !after ...]
+    [!before ... [?head        . !clauses ...]  . !after ...]
     ;; `or` expressions: [rule-head (or clause1 clause2)]
     ;; translates to disjunctive form: [rule-head clause1] [my-rule clause2]
     [!before ... [?head (~'or . !clauses ...)]  . !after ...]
-    [!before ... [?head !clauses] ...             !after ...]))
+    [!before ... [?head         !clauses] ...     !after ...]))
 
 (defn qualify-rule-references
   "Rules are qualified with their namespace, so that you can follow function conventions."
@@ -162,6 +230,7 @@
 
 (defn as-rules [qualified-rule-name args body]
   (assert (qualified-symbol? qualified-rule-name) "Rule names must be namespace qualified symbols")
+  (assert (some? body) "Empty body (did you forget to quote it?)")
   (let [qualify (qualify-rule-references (namespace qualified-rule-name))]
     (-> [(datascript-rule qualified-rule-name args body)]
       (datascript-rules)
@@ -180,23 +249,29 @@
         matching-rules (filter match-rule rules)
         other-rules (remove match-rule rules)
         entity-result-clause?
-        (m/choice
-          (m/rewrite
-            [~result-variable ?a ?v]
-            true)
-          (m/rewrite
-            [?e ?a ~result-variable]
-            ~(if (= :db.type/ref (get-in db [:schema ?a :db/valueType]))
-               true
-               false))
+        (m/rewrite
+          ;; entity position in a datom triple
+          [~result-variable ?a ?v]
+          true
+
+          ;; value position, but schema says type is ref
+          [?e ?a ~result-variable]
+          ~(if (= :db.type/ref (get-in db [:schema ?a :db/valueType]))
+             true
+             false)
+
           ;; TODO: do other arities need to be considered?
-          (m/rewrite
-            (?r ?x ~result-variable)
-            ~(entity-result? db other-rules ?r [?x result-variable]))
-          (m/rewrite
-            (?r ~result-variable ?x)
-            ~(entity-result? db other-rules ?r [result-variable ?x]))
-          (m/rewrite _ true))]
+          ;; rule application, result in the return position
+          (?r ?x ~result-variable)
+          ~(entity-result? db other-rules ?r [?x result-variable])
+
+          ;; rule application, result in the argument position
+          (?r ~result-variable ?x)
+          ~(entity-result? db other-rules ?r [result-variable ?x])
+
+          ;; probably fine, right?
+          _ true)]
+    ;; TODO: should do a bottom up search, not a rewrite.
     (every? true?
       (for [[head & body] matching-rules
             clause body]
