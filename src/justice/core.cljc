@@ -131,13 +131,6 @@
      :in '[$ % ?a ?b]
      :where [(list rule-symbol '?a '?b)]}))
 
-(defn maybe-id
-  "Returns the id of an entity, or the original value."
-  [x]
-  (or (and (map? x)
-           (get x :db/id))
-      x))
-
 (defn rule-query
   "Runs a rule query against a db using rules."
   [db rules rule-name args]
@@ -147,12 +140,12 @@
       `(d/q ~(query-pattern rule-name args)
             ~'db
             ~rules
-            ~@(map maybe-id args))))
+            ~@(map t/maybe-id args))))
   (apply d/q
          (query-pattern rule-name args)
          db
          rules
-         (map maybe-id args)))
+         (map t/maybe-id args)))
 
 (defn apply-rule
   "Queries a DataScript db using a pre-defined rule identified by rule-name."

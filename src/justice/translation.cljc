@@ -1,11 +1,22 @@
 (ns justice.translation
-  #?(:cljs (:require-macros [justice.translation :refer [rewrite-all]]))
+  "Translates Justice map and function call expressions to Datalog triple queries"
+  #?(:cljs (:require-macros [justice.translation :refer [bottom-up top-down with-incremental-gensym]]))
   (:require [clojure.string :as string]
+            [clojure.edn :as edn]
             [meander.strategy.gamma :as m]))
 
 #?(:clj
-   (defmacro rewrite-all [& body]
+   (defmacro bottom-up [& body]
      `(m/until = (m/bottom-up (m/attempt (m/rewrite ~@body))))))
+#?(:clj
+   (defmacro top-down [& body]
+     `(m/until = (m/top-down (m/attempt (m/rewrite ~@body))))))
+#?(:clj
+   (defmacro with-incremental-gensym [& body]
+     `(let [c# (atom 0)]
+        (with-redefs [gensym (fn incremental-gensym# [prefix#]
+                               (symbol (str prefix# (swap! c# inc))))]
+          ~@body))))
 
 (defn- inverse?
   "Names like :my.ns/_attribute indicates an inverse relationship."
@@ -57,46 +68,189 @@
       (not (list? x))
       (not (seq? x)))))
 
+(def ^:private rearrange-logic
+  (bottom-up
+   ;; nested commutative logic is raised
+   ((pred #{'and 'or} ?op) . !before ... (?op . !clauses ...) . !after ...)
+   (?op . !before ... !clauses ... !after ...)
+
+   ;; moves `or` to the outside, and `and` to the inside to match Datalog rule convention
+   ('and . !before ... ('or . !clauses ...) . !after ...)
+   ('or . ('and . ~@!before . !clauses . ~@!after) ...)
+
+   ;; identity logic expressions are flattened
+   ((pred #{'and 'or} ?op) ?body)
+   ?body
+
+   ;; double negatives are removed
+   ('not ('not ?body))
+   ?body
+
+   ;; moves `not` inside to match Datalog rule convention
+   ('not ('or . !clauses ...))
+   ('and . ('not !clauses) ...)
+
+   ('not ('and . !clauses ...))
+   ('or . ('not !clauses) ...)))
+
+(defn maybe-id
+  "Returns the id of an entity, or the original value."
+  [x]
+  (or (and (map? x)
+           (get x :db/id))
+      x))
+
+;;(declare u)
+
+#_((def e
+   (m/rewrite
+    {}
+    (u v))))
+
+#_((def u
+   (m/rewrite
+    ([!ks !vs] ...)
+    [!ks ... ($ ~clojure.string/upper-case !vs) ...]))
+ (seq {:a "foo" :b "bar"}))
+
+
+;;('and {?k ?v & ?m} {?r ?v & ?m2})
+
+;;(?r {:as ?m})
+;;1
+;;(:k ?x)
+;; step 1:
+
+(defn unravel-pattern [m]
+  (let [e (get m :db/id (gensym "?e"))]
+    [e (for [[k v] m
+             :when (not= k :db/id)
+             :let [ss (if (map? v)
+                        (let [[eid triples] (unravel-pattern v)]
+                          (cons [e k eid]
+                                triples))
+
+                        [[e k v]])]
+             s ss]
+         s)]))
+
+(def collapse-entities
+  (bottom-up
+    (and
+      {?k (?r ?x) & ?m1}
+      (guard (keyword? ?r))
+      (let ?v (gensym "?v")))
+    ('and {?k ?v & ?m1} {:db/id ~(maybe-id ?x) ?r ?v})
+
+    (and
+      {?k (?r {& ?m2}) & ?m1}
+      (guard (keyword? ?r))
+      (let ?v (or (get ?m2 ?r) (gensym "?v"))))
+    ('and {?k ?v & ?m1} {?r ?v & ?m2})
+
+   ;; todo: {:k (:k2 (:k3 {}))}
+
+   ;; ?v must be an entity
+   #_#_(and
+    (?r ?v)
+    (guard (keyword? ?r)))
+   {?r (gensym "?v")
+    :db/id ~(maybe-id ?v)}))
+
+
+
+(def ^:private map-terms
+  (rearrange-logic
+    (top-down
+      (and
+        (?l . !expr ...)
+        (guard (logic? ?l))
+        (let ?e (gensym "?e")))
+      ('and ~@(map map-terms !expr))
+      ;; TODO: we want to unify base for all sub expr for this and other situations
+
+      {:as ?m}
+      ('and ~@(second (unravel-pattern ?m)))
+
+      (and
+        (?r {:as ?m})
+        (guard op? ?r))
+      {?r ~(gensym "?e") & ?m})))
+
 (defn- bridge-expr [r t a b c]
-  (let [bridge (gensym "?bridge_")]
+  (let [bridge (gensym "?e")]
     (list 'and
-      (t a b bridge)
-      (if (keyword? r)
-        [bridge r c]
-        (list r bridge c)))))
+          (t a b bridge)
+          (if (keyword? r)
+            [bridge r c]
+            (list r bridge c)))))
+
+(comment
+ ;; base case; link to the ?result to be found
+ ;; keyword get style (:some/attribute ?x)
+ (and
+  (?r ?x)
+  (guard (op? ?r))
+  (guard (ground? ?x)))
+ ~(if (keyword? ?r)
+    [?x ?r (gensym "?e")]
+    (list ?r ?x (gensym "?e"))))
+
+(defn- with-id [m]
+  (if (contains? m :db/id)
+    m
+    (assoc m :db/id (gensym "?e"))))
+
+(defn- entity-clauses [m]
+  (let [e (or (:db/id m) (gensym "?e"))
+        props (for [[k v] (dissoc m :db/id)]
+                [k (if (map? v)
+                     (with-id v)
+                     v)])]
+    (into []
+     (concat
+      ;; bridging clauses
+      (for [[k v] props]
+        [e k (if (map? v)
+               (:db/id v)
+               v)])
+      ;; matching clauses
+      (for [[k v] props
+            :when (map? v)
+            :let [subclauses (entity-clauses v)]
+            clause subclauses]
+        clause)))))
 
 (def ^:private bridge-terms
   "Converts justice rule syntax into DataScript bridged triple syntax."
-  (rewrite-all
-    ;; This is an entity, we only want the id
+  #_(top-down
+    ;; Unique entity, we only need the id
     {:db/id (pred integer? ?id)}
     ?id
 
     ;; base case for patterns
-    ;; don't bother with and for single map
-    {?k ?v :as ?m}
-    ~(if (> (count ?m) 1)
-       (cons 'and (for [[k v] ?m]
-                    (list (inverse k) v)))
-       (list (inverse ?k) ?v))
+    (and
+     {?k ?v :as ?m}
+     ;; TODO: is there an explict way to expect this in meander?
+     (guard (= (count ?m) 1))
+     (let ?e ~(gensym "?e")))
+    [?v ~(inverse ?k) ?e]
 
-    #_(and {!r !x}
-        (guard (op? !r))
-        (guard (ground? !x)))
-    #_('and . ($ ~f [!x !r]) ...)
 
-    ;;; TODO: everything in an and should be linked
+    (and
+     {?k {:as ?n} :as ?m}
+     (let ?e ~(gensym "?e")))
+    [?p ?k ?e]
+    [?e !k !v] ...
 
-    ;; base case; link to the ?result to be found
-    ;; keyword get style (:some/attribute ?x)
-    ;; translates to a DataScript triple clause [?x :some/attribute ?result]
-    ;; TODO: base may join
-    (and (?r ?x)
-      (guard (op? ?r))
-      (guard (ground? ?x)))
-    ~(if (keyword? ?r)
-       [?x ?r '?justice-pattern-base]
-       (list ?r ?x '?justice-pattern-base))
+
+    ;; an entity pattern must match the conjunction of triple clauses for each property
+    (and
+     ;; TODO: can this be meander syntax?
+     {[!ks !vs] ... :as ?m}
+     (let ?e ~(gensym "?e")))
+    ('and
+     [?e ~(inverse !k) !v] ...)
 
     ;; expand nested call syntax
     ;; to a bridged pair of DataScript triple clauses:
@@ -125,7 +279,7 @@
     ('and . !clauses ... ~@(rest (bridge-expr ?r list ?a ?b ?c)))))
 
 (def ^:private uninverse-terms
-  (rewrite-all
+  (bottom-up
     (and [?x ?r ?y]
       (guard (inverse? ?r)))
     [?y ~(inverse ?r) ?x]
@@ -135,65 +289,82 @@
       (guard (inverse? ?r)))
     (~(inverse ?r) ?y ?x)))
 
-(def ^:private rearrange-logic
-  (rewrite-all
-    ;; nested commutative logic is raised
-    ((pred #{'and 'or} ?op) . !before ... (?op . !clauses ...) . !after ...)
-    (                  ?op  . !before ...        !clauses ...    !after ...)
-
-    ;; moves `or` to the outside, and `and` to the inside to match Datalog rule convention
-    ('and . !before ... ('or  . !clauses ...) . !after ...)
-    ('or  . ('and . ~@!before . !clauses . ~@!after)   ...)
-
-    ;; identity logic expressions are flattened
-    ((pred #{'and 'or} ?op) ?body)
-    ?body
-
-    ;; double negatives are removed
-    ('not ('not ?body))
-    ?body
-
-    ;; moves `not` inside to match Datalog rule convention
-    ('not ('or . !clauses ...))
-    ('and . ('not !clauses) ...)
-    ('not ('and . !clauses ...))
-    ('or . ('not !clauses) ...)))
-
-(defn- count-occurrences
-  "Returns how many times sym appears in expression"
-  [expression]
+(defn- occurs-in?
+  "Returns true when x occurs in expression."
+  [x expression]
   (->> expression
-    (tree-seq sequential? seq)
-    (frequencies)))
+       (tree-seq sequential? seq)
+       (some #{x})
+       (boolean)))
 
-(defn- replace-base [expr sym]
-  ((rewrite-all '?justice-pattern-base ~sym) expr))
+(defn- replace-base [expr sym1 sym2]
+  ((bottom-up ~sym1 ~sym2) expr))
 
 (defn- maybe-replace-base-clause
-  "The base of a justice expression may be replaced by ?result for querying,
-  but only if an explicit ?result was not specified in the pattern.
-  If no ?result was specified, then we replace base with ?result,
-  otherwise base can be removed.
+  "If an explicit ?result was not specified in the pattern,
+  then the base of a justice expression is identified by ?result.
+  If the expression is an entity, ?result is the id of the entity.
+  If the expression is a function call, then ?result is the value.
   This is special behavior for the ?result symbol."
   [expression]
-  (let [{result-count '?result
-         base-count '?justice-pattern-base
-         :or {result-count 0 base-count 0}}
-        (count-occurrences expression)]
-    (if (> result-count 0)
-      (if (> base-count 1)
-        expression
-        (replace-base expression '_))
-      (replace-base expression '?result))))
+  #_(m/rewrite
+   ('or . !x ...)
+   ('or . ($ ~maybe-replace-base-clause !x) ...)
 
-(def from-justice
+   ;;(?f ?z)
+
+   ;; only if result not present below
+   {:db/id (pred (complement #{'?result}) ?id)}
+   ~(throw (ex-info "Base clause has a non-result identity" {}))
+
+   {:db/id nil & ?m}
+   {:db/id '?result & ?m}
+
+
+   (if (= 'or (first expression))
+     (cons 'or (map maybe-replace-base-clause (rest expression)))
+     (if (-> '?result (occurs-in? expression))
+       expression
+       (if (map? expression)
+         (assoc expression :db/id '?result)
+         ())))))
+
+;; 1. Convert function syntax to map syntax
+;;    what about nested function calls?
+;;    what about top level `or`?
+;;    what about logic?
+#_(def ^:private f2m
+  (top-down
+   (?f ?x)))
+
+
+;; 2. Maybe assign result
+(def ^:private imply-result
+  ())
+
+;; 3. Top down create triples
+(def ^:private create-triples
+  bridge-terms)
+
+(defn from-justice* [x]
+  (-> x
+    collapse-entities
+    map-terms
+    ;;bridge-terms
+    uninverse-terms
+    rearrange-logic
+    maybe-replace-base-clause))
+
+(defn from-justice
   "Translates justice syntax to bridged triples"
-  (comp maybe-replace-base-clause rearrange-logic uninverse-terms bridge-terms))
+  [expression]
+  (with-incremental-gensym
+   (from-justice* expression)))
 
 ;; TODO: provide a way to convert clauses to justice
 #_(def to-justice
     "Converts DataScript rule syntax into justice syntax."
-    (rewrite-all ...))
+    (bottom-up ...))
 
 (defn datascript-rule
   "A DataScript rule consists of a head describing the name/inputs, and clauses in tripple syntax."
@@ -207,7 +378,7 @@
 ;; Alternatively can or/and be made to work with or-join? Is that just as efficient?
 (def datascript-rules
   "Converts justice and/or syntax to DataScript conjunction/disjunction syntax."
-  (rewrite-all
+  (bottom-up
     ;; TODO: ands ands ands
     ;; `and` expressions: [rule-head (and clause1 clause2)]
     ;; translates to conjunctive form: [rule-head clause1 clause2]
@@ -221,7 +392,7 @@
 (defn qualify-rule-references
   "Rules are qualified with their namespace, so that you can follow function conventions."
   [current-ns-str]
-  (rewrite-all
+  (bottom-up
     (and (?s . !args ...)
       (guard (and (symbol? ?s)
                (not (contains? logic? ?s))

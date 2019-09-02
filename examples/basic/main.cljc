@@ -203,3 +203,15 @@
            (ancestor* ?z ?result))))
 (map :entity/name (ancestor* 1))
 ;=> ("Grandmother" "Mother")
+
+(defn grand-parent* [x]
+  (j/q `(:entity/parent (:entity/parent ~x))))
+(grand-parent* 1)
+;=> (#:db{:id 3})
+
+(j/defq grand-parent [?x]
+  (:entity/parent (:entity/parent ?x)))
+(grand-parent 1)
+
+(j/q '(:entity/name (grand-parent 1)))
+;; TODO: why no worky?

@@ -4,7 +4,8 @@
   and what the new db is.
   This namespace provides convenience wrappers to set up reactive entity navigation,
   suitable for React UIs."
-  (:require [datascript.core :as d]))
+  (:require [datascript.core :as d]
+            [meander.strategy.gamma :as m]))
 
 (defn- tx-relates-to-entity? [id {:keys [tx-data]}]
   (boolean
@@ -73,6 +74,18 @@
             (when (not= new @current)
               (reset! current new)
               (on-change new))))))
-    ;; destructor
-    (fn cleanup-reffect []
-      (d/unlisten! conn k))))
+    [@current
+     ;; destructor
+     (fn cleanup-reffect []
+       (d/unlisten! conn k))]))
+#_
+(defmacro defm
+  [jq substitution]
+  `(r/with-let
+    [qq (j/q jq)
+     a (r/atom nil)
+     [current cleanup] (rdbfn conn qq identity #(reset! a %))
+     ;; TODO: a should be current
+     rw# (m/rewrite ~q ~substitution)]
+    (rw# @a)
+    (finally (cleanup))))

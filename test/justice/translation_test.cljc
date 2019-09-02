@@ -1,16 +1,7 @@
 (ns justice.translation-test
   (:require [clojure.test :refer [deftest is testing]]
             [justice.translation :as t]
-            [clojure.string :as string]
-            [datascript.core :as d]
-            [meander.strategy.gamma :as m]))
-
-(def ungensym
-  (t/rewrite-all
-    (and ?gensym
-      (guard (and (symbol? ?gensym)
-               (re-matches #"\?.*_\d+" (name ?gensym)))))
-    ~(symbol (first (string/split (name ?gensym) #"_")))))
+            [datascript.core :as d]))
 
 (deftest uninverse-test
   (testing "symbols and keywords from inverse to forward style"
@@ -23,6 +14,32 @@
     (is (= 'foo.bar/ancestor (@#'t/inverse 'foo.bar/_ancestor)))
     (is (= 'foo.bar/_ancestor (@#'t/inverse 'foo.bar/ancestor)))))
 
+(deftest t
+  (testing "pattern matching"
+    (-> '{:k1 "foo"
+          :k2 {:k3 "bar"
+               :k4 "baz"}}
+        (#'t/map-terms)
+        (t/with-incremental-gensym)
+        (= '(and
+             [?e1 :k1 "foo"]
+             [?e1 :k2 ?e2]
+             [?e2 :k3 "bar"]
+             [?e2 :k4 "baz"]))
+        (is "justice handles nested complex maps"))
+
+    (-> '{:entity/name "Justice"
+          :entity/parent {:entity/parent {:entity/name "Grandmother"}
+                          :entity/name ?result}}
+        (t/from-justice)
+        (= '(and
+             [?e1 :entity/name "Justice"]
+             [?e1 :entity/parent ?e2]
+             [?e2 :entity/parent ?e3]
+             [?e3 :entity/name "Grandmother"]
+             [?e2 :entity/name ?result]))
+        (is "justice handles nesting up and nesting down"))))
+
 (deftest pattern-matching-expansions-test
   (testing "pattern matching syntax"
 
@@ -33,38 +50,35 @@
 
     (-> '{:k4 {:k3 {:k2 {:k1 ?x}}}}
       (t/from-justice)
-      (ungensym)
       (= '(and
-            [?bridge :k1 ?x]
-            [?bridge :k2 ?bridge]
-            [?bridge :k3 ?bridge]
-            [?result :k4 ?bridge]))
+           [?result :k4 ?e2]
+           [?e2 :k3 ?e3]
+           [?e3 :k2 ?e4]
+           [?e4 :k1 ?x]))
       (is "justice translates deeply nested patterns"))
 
     (-> '{:k2 {:k1 ?x}
           :k4 {:k3 ?x}}
       (t/from-justice)
-      (ungensym)
       (= '(and
-            [?bridge :k1 ?x]
-            [?result :k2 ?bridge]
-            [?bridge :k3 ?x]
-            [?result :k4 ?bridge]))
+           [?result :k2 ?e2]
+           [?e2 :k1 ?x]
+           [?result :k4 ?e3]
+           [?e3 :k3 ?x]))
       (is "justice translates function application style to bridged triples"))
 
     (-> '{:foo/bar ?result}
       (t/from-justice)
-      (= '[_ :foo/bar ?result])
-      (is "justice allows using a different special ?result target, base is removed"))
+      (= '[?e1 :foo/bar ?result])
+      (is "justice allows using a different special ?result target"))
 
     (-> '{:entity/parent {:entity/parent [:entity/name "Grandmother"]}
           :entity/name ?result}
       (t/from-justice)
-      (ungensym)
       (= '(and
-            [?bridge :entity/parent [:entity/name "Grandmother"]]
-            [?justice-pattern-base :entity/parent ?bridge]
-            [?justice-pattern-base :entity/name ?result]))
+           [?e1 :entity/parent ?e2]
+           [?e2 :entity/parent [:entity/name "Grandmother"]]
+           [?e1 :entity/name ?result]))
       (is "justice handles nested use of ?result, where base cannot be removed"))))
 
 (deftest datascript-rule-expansions-test
@@ -74,6 +88,32 @@
       (= '[(translation-test/rule-name ?x ?result)
            [?x :entity/parent ?result]])
       (is "justice 'get keyword' style translates to Datascript 'relate to result' style"))
+
+    (-> '(:k1 {:k2 "foo"})
+        (t/from-justice)
+        (= '(and [?e2 :k2 "foo"]
+                 [?e2 :k1 ?result]))
+        (is "justice handles both function application style with pattern style"))
+
+    (-> '{:k1 (:k2 ?x)}
+        (t/from-justice)
+        (= '(and [?result :k1 ?v1]
+                 [?x :k2 ?v1]))
+
+        (is "justice handles both function application style with pattern style"))
+
+    (-> '{:a (:k1 (:k2 {}))}
+        (t/from-justice)
+        (= '(and [?e2 :k1 ?x]
+                 [?e1 :k2 ?z]
+                 [?result :a ?x]))
+        (is "justice handles extracting nested attribute references"))
+
+    (-> '{:a (:k {:k ?x})}
+        (t/from-justice)
+        (= '(and [?e1 :k ?x]
+                 [?result :a ?x]))
+        (is "justice handles extracting an existing attribute"))
 
     (-> '(:foo/bar 1)
       (t/from-justice)
@@ -94,72 +134,64 @@
 
     (-> '(:k2 (:k1 ?x))
       (t/from-justice)
-      (ungensym)
       (= '(and
-            [?x :k1 ?bridge]
-            [?bridge :k2 ?result]))
+            [?x :k1 ?e2]
+            [?e2 :k2 ?result]))
       (is "nested 'get keyword' style translates to 'bridged triples'"))
 
     (-> '(:k3 (:k2 (:k1 ?x)))
       (t/from-justice)
-      (ungensym)
       (= '(and
-            [?x :k1 ?bridge]
-            [?bridge :k2 ?bridge]
-            [?bridge :k3 ?result]))
+            [?x :k1 ?e2]
+            [?e2 :k2 ?e3]
+            [?e3 :k3 ?result]))
       (is "deeply nested 'get keyword' style translates to 'bridged triples'"))
 
     (-> '(:k4 (:k3 (:k2 (:k1 ?x))))
       (t/from-justice)
-      (ungensym)
       (= '(and
-            [?x :k1 ?bridge]
-            [?bridge :k2 ?bridge]
-            [?bridge :k3 ?bridge]
-            [?bridge :k4 ?result]))
+            [?x :k1 ?e2]
+            [?e2 :k2 ?e3]
+            [?e3 :k3 ?e4]
+            [?e4 :k4 ?result]))
       (is "very deeply nested 'get keyword' style translates to 'bridged triples'"))
 
     (-> '(or (:entity/parent ?x)
            (ancestor (:entity/parent ?x)))
       (t/from-justice)
-      (ungensym)
       (= '(or [?x :entity/parent ?result]
             (and
-              [?x :entity/parent ?bridge]
-              (ancestor ?bridge ?result))))
+              [?x :entity/parent ?e3]
+              (ancestor ?e3 ?result))))
       (is "expressions nested in logic expand with a bridge"))
 
     (-> '(or (:entity/_parent ?x)
            (descendant (:entity/_parent ?x)))
       (t/from-justice)
-      (ungensym)
       (= '(or [?result :entity/parent ?x]
             (and
-              [?bridge :entity/parent ?x]
-              (descendant ?bridge ?result))))
+              [?e3 :entity/parent ?x]
+              (descendant ?e3 ?result))))
       (is "reverse traversal inverts the triples"))
 
     (-> '(:_k3 (:k2 (:_k1 ?x)))
       (t/from-justice)
-      (ungensym)
       (= '(and
-            [?bridge :k1 ?x]
-            [?bridge :k2 ?bridge]
-            [?result :k3 ?bridge]))
+            [?e2 :k1 ?x]
+            [?e2 :k2 ?e3]
+            [?result :k3 ?e3]))
       (is "very deeply nested inverse get style translates to forward style"))
 
     (-> '(basic.main/_ancestor 1)
       (t/from-justice)
-      (ungensym)
       (= '(basic.main/ancestor ?result 1))
       (is "inverted fully qualified rule names are uninverted."))
 
     (-> '(:entity/parent (_ancestor 1))
       (t/from-justice)
-      (ungensym)
       (= '(and
-            (ancestor ?bridge 1)
-            [?bridge :entity/parent ?result]))
+            (ancestor ?e2 1)
+            [?e2 :entity/parent ?result]))
       (is "rules can be called inside triples"))
 
     (-> '[[rule-head
@@ -192,8 +224,8 @@
                     [(basic.main/ancestor ?x ?result)
                      [?x :entity/parent ?result]]
                     [(basic.main/ancestor ?x ?result)
-                     [?x :entity/parent ?bridge_14745]
-                     (basic.main/ancestor ?bridge_14745 ?result)]]]
+                     [?x :entity/parent ?e1]
+                     (basic.main/ancestor ?e1 ?result)]]]
         (is (= true
               (t/entity-result? @conn rules rule-name args))
           "query is for entity results"))
@@ -203,8 +235,8 @@
                     [(basic.main/ancestor ?x ?result)
                      [?x :entity/name ?result]]
                     [(basic.main/ancestor ?x ?result)
-                     [?x :entity/name ?bridge_14745]
-                     (basic.main/ancestor ?bridge_14745 ?result)]]]
+                     [?x :entity/name ?e1]
+                     (basic.main/ancestor ?e1 ?result)]]]
         (is (= true
               (t/entity-result? @conn rules rule-name args))
           "query is for ?x"))
@@ -214,8 +246,8 @@
                     [(basic.main/ancestor ?x ?result)
                      [?x :k ?result]]
                     [(basic.main/ancestor ?x ?result)
-                     [?x :k ?bridge_14745]
-                     (basic.main/ancestor ?bridge_14745 ?result)]]]
+                     [?x :k ?e1]
+                     (basic.main/ancestor ?e1 ?result)]]]
         (is (= false
               (t/entity-result? @conn rules rule-name args))
           "query is for scalar results")))))
@@ -288,3 +320,66 @@
             (and :c :d)
             (and :c (:a :b))))
       (is "complex combinations are resolved"))))
+
+#_(deftest maybe-replace-base-clause-test
+  (testing "Base is ?result if no ?result specified"
+    (-> '{:a {:b ?result}}
+        (#'t/maybe-replace-base-clause)
+        (= '{:a {:b ?result}})
+        (is "When ?result is specified, nothing happens"))
+    (-> '{:a {:b 1}}
+        (#'t/maybe-replace-base-clause)
+        (= '{:a {:b ?result}
+             :db/id ?result})
+        (is "When ?result is not specified, and the base expression is an entity, result? will be the entity id"))
+    (-> '{:a {:b 1}
+          :db/id ?foo}
+        (#'t/maybe-replace-base-clause)
+        (->> (thrown? 1))
+        (is "Cannot determine what ?result should be"))
+    (-> '(:a {:a {:b 1}})
+        (#'t/maybe-replace-base-clause)
+        (= '{:a {:b 1
+                 :db/id ?result}})
+        ;; TODO: maybe this happens first
+        (is "Function call style implies an entity (or value)..."))))
+
+#_(deftest ttt
+  ;; depends if k3 is value or entity :(
+  (-> '(:k3 (:k2 (:k1 ?x)))
+      (#'t/f2m)
+      (= '{:db/id ?result
+           :k3 {:k2 {:k1 ?x}}}
+         '(and
+           [?x :k1 ?e2]
+           [?e2 :k2 ?e3]
+           [?e3 :k3 ?result]))
+      (is "deeply nested 'get keyword' style translates to 'bridged triples'")))
+
+(deftest entity-clauses-test
+  (-> '{:db/id ?result
+        :size 1
+        :color "blue"}
+      (#'t/entity-clauses)
+      (= '[[?result :size 1]
+           [?result :color "blue"]])
+      (is "A flat entity creates a clause for every property"))
+  (-> '{:db/id ?result
+        :parent {:size 1
+                 :color "blue"}}
+      (#'t/entity-clauses)
+      (t/with-incremental-gensym)
+      (= '[[?result :parent ?e1]
+           [?e1 :size 1]
+           [?e1 :color "blue"]])
+      (is "A nested entity is flattened to clauses"))
+  (-> '{:db/id ?result
+        :parent {:color "blue"
+                 :parent {:color "green"}}}
+      (#'t/entity-clauses)
+      (t/with-incremental-gensym)
+      (= '[[?result :parent ?e1]
+           [?e1 :color "blue"]
+           [?e1 :parent ?e2]
+           [?e2 :color "green"]])
+      (is "A deeply nested entity is flattened to clauses")))

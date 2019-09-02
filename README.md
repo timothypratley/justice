@@ -24,6 +24,7 @@ But queries in these systems are often expressed as complex code.
 Users run into problems when trying to combine and reuse query parts to form new queries.
 Queries require rules to compose well and to be scoped.
 The built-in rules features take careful planning to wield.
+Justice is designed for clear and concise rule creation and composition.
 
 In his keynote,
 [Zeno and the tar pit](https://skillsmatter.com/skillscasts/12820-keynote-zeno-and-the-tar-pit),
@@ -67,6 +68,16 @@ This provides several architectural benefits:
 5) Absence of unnecessary boilerplate.
 
 A concise syntax can provide a clear and robust way to express queries as rules.
+
+Data is stored as datoms.
+Queries are expressed as entities.
+Results are built from the pattern. 
+
+![datoms -> entities -> output](justice.png)
+
+It is time to move beyond maps.
+Datalog provides a way to do indexing, schema and query in such a way that we can traverse data as an entity graph efficiently.
+Justice provides a clear and concise syntax for expressing entity oriented operations.
 
 
 ## Usage
@@ -355,11 +366,11 @@ We can use logic and rules inside justice expressions:
 We could save a find query into a function:
 
     (defn grand-parent [x]
-      (j/q '(:entity/parent (:entity/parent x)))
+      (j/q `(:entity/parent (:entity/parent ~x))))
 
 But consider using `defq` instead:
 
-    (defq grand-parent [?x]
+    (j/defq grand-parent [?x]
       (:entity/parent (:entity/parent ?x)))
 
 The difference is that `defq` queries are composable.
@@ -399,7 +410,7 @@ Here we are asking for the `?result` to be 1, for some `?x`.
 
 We can avoid providing both sides of the relation by reversing it:
 
-    (map :entity/name (j/q (_ancestor [:entity/name "Justice"])))
+    (map :entity/name (j/q (_ancestor {:entity/name "Justice"})))
     ;=> ("Good Child" "Bad Child")
 
 `defq` is in fact creating a reusable rule.
@@ -447,7 +458,7 @@ Rules can make use of other rules:
     (j/defq dead-ancestors [?x]
       (and (:entity/_death _)
            (ancestor ?x)))
-    (map :entity/name (dead-ancestors [:entity/name "Justice"]))
+    (map :entity/name (dead-ancestors {:entity/name "Justice"}))
     ;=> ("Grandmother")
 
 While it appears that `dead-ancestors` applies `ancestor` directly,
