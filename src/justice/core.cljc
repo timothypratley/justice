@@ -7,18 +7,16 @@
             [clojure.pprint :as pprint]
             [datascript.core :as d]))
 
-(def ^:dynamic *trace*
-  "Can be bound to enable trace println messages"
-  false)
+(def ^{:dynamic true
+       :doc "Can be bound to enable trace println messages"}
+  *trace* false)
 
-(defonce
-  ^{:dynamic true
-    :doc "Can be bound or attached to provide a db connection."}
+(defonce ^{:dynamic true
+           :doc "Can be bound or attached to provide a db connection."}
   *conn* nil)
 
-(defonce
-  ^{:dynamic true
-    :doc "Stores all rules created with defrule. Can be bound for testing purposes."}
+(defonce ^{:dynamic true
+           :doc "Stores all rules created with defrule. Can be bound for testing purposes."}
   *rule-registry* {})
 
 (defn attach
@@ -254,3 +252,5 @@
       [a
        #()
        (d/unlisten! *conn* k)])))
+
+;; TODO: provide a formal gramma of valid expressions with validation
