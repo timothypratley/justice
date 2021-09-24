@@ -3,14 +3,15 @@
   ;; TODO: maybe have a .clj file for macros?
   #?(:cljs (:require-macros [justice.translation :refer [bottom-up top-down]]))
   (:require [clojure.string :as string]
-            [meander.strategy.gamma :as m]))
+            [meander.strategy.epsilon :as s]
+            [meander.epsilon :as m]))
 
 #?(:clj
    (defmacro bottom-up [& body]
-     `(m/until = (m/bottom-up (m/attempt (m/rewrite ~@body))))))
+     `(s/until = (s/bottom-up (s/attempt (s/rewrite ~@body))))))
 #?(:clj
    (defmacro top-down [& body]
-     `(m/until = (m/top-down (m/attempt (m/rewrite ~@body))))))
+     `(s/until = (s/top-down (s/attempt (s/rewrite ~@body))))))
 
 (def ^:dynamic *counter*)
 
@@ -63,26 +64,29 @@
       (and (not (vector? x))
            (not (list? x))
            (not (seq? x)))))
+(def x (s/rewrite ?x ?x))
 
 (def ^:private rearrange-logic
-  (bottom-up
+  (s/rewrite
    ;; nested commutative logic is raised
-   ((pred #{'and 'or} ?op) . !before ... (?op . !clauses ...) . !after ...)
+   ((m/pred #{'and 'or} ?op) . !before ... (?op . !clauses ...) . !after ...)
    (?op . !before ... !clauses ... !after ...)
 
+   ;; broken in meander epsilon
    ;; moves `or` to the outside, and `and` to the inside to match Datalog rule convention
+   #_#_
    ('and . !before ... ('or . !clauses ...) . !after ...)
    ('or . ('and . ~@!before . !clauses . ~@!after) ...)
 
    ;; identity logic expressions are flattened
-   ((pred #{'and 'or} ?op) ?body)
+   ((m/pred #{'and 'or} ?op) ?body)
    ?body
 
    ;; double negatives are removed
    ('not ('not ?body))
    ?body
 
-   ;; moves `not` inside to match Datalog rule convention
+   ;; moves `not` inside to match Datalog rule convention (De Morgan's law)
    ('not ('or . !clauses ...))
    ('and . ('not !clauses) ...)
 
@@ -99,12 +103,12 @@
 ;;(declare u)
 
 #_((def e
-   (m/rewrite
+   (s/rewrite
     {}
     (u v))))
 
 #_((def u
-   (m/rewrite
+   (s/rewrite
     ([!ks !vs] ...)
     [!ks ... ($ ~clojure.string/upper-case !vs) ...]))
  (seq {:a "foo" :b "bar"}))
@@ -167,22 +171,22 @@
 
 (def ^:private top-level-lookup
   "Top level lookup syntax implies result"
-  (m/attempt
-   (m/rewrite
-    (and
+  (s/attempt
+   (s/rewrite
+    (m/and
      (?r ?x :as ?expr)
-     (guard (keyword? ?r))
-     (guard (not (occurs-in? '?result ?expr))))
+     (m/guard (keyword? ?r))
+     (m/guard (not (occurs-in? '?result ?expr))))
     ~(collect-lookups ?expr '?result))))
 
 #_(def ^:private top-level-logic
   "Top level lookup syntax implies result"
-  (m/attempt
-   (m/rewrite
-    (and
+  (s/attempt
+   (s/rewrite
+    (m/and
      (?l . !xs ...)
-     (guard (logic? ?l))
-     (guard (not (occurs-in? '?result !xs))))
+     (m/guard (logic? ?l))
+     (m/guard (not (occurs-in? '?result !xs))))
     (?l ~(map (comp top-level-logic top-level-lookup)
               !xs))
     ?x)))
@@ -190,37 +194,38 @@
 (def ^:private lookups-as-maps
   "Function style lookups imply two related entities"
   (top-down
-   (and
+   (m/and
     {?k (?r {& ?m2}) & ?m1}
-    (guard (keyword? ?r))
+    (m/guard (keyword? ?r))
     (let ?v (or (get ?m2 ?r) (next-variable "v"))))
    ('and
     {?k ?v & ?m1}
     {?r ?v & ?m2})
 
-   (and
+   (m/and
     {?k (?r ?x) & ?m1}
-    (guard (keyword? ?r))
+    (m/guard (keyword? ?r))
     (let ?v (next-variable "v")))
    ('and
     {?k ?v & ?m1}
     {:db/id ~(maybe-id ?x)
      ?r ?v})
 
-   (and
+   (m/and
     (?r1 ?x :as ?expr)
-    (guard (keyword? ?r1)))
+    (m/guard (keyword? ?r1)))
    ~(collect-lookups ?expr (next-variable "v"))))
 
 (def ^:private expand-maps-to-triples
-  "Takes map syntax and returns tripple syntax"
+  "Takes map syntax and returns triple syntax"
   (top-down
+    ;; broken in meander epsilon
    {:as ?m}
-   ('and ~@(second (unravel-pattern ?m)))
+   ('and & (second (unravel-pattern ?m)))
 
-   (and
+   (m/and
     (?r {:as ?m})
-    (guard op? ?r))
+    (m/guard (op? ?r)))
    {?r ~(next-variable "e") & ?m}))
 
 (defn- bridge-expr [r t a b c]
@@ -234,10 +239,10 @@
 (comment
  ;; base case; link to the ?result to be found
  ;; keyword get style (:some/attribute ?x)
- (and
+ (m/and
   (?r ?x)
-  (guard (op? ?r))
-  (guard (ground? ?x)))
+  (m/guard (op? ?r))
+  (m/guard (ground? ?x)))
  ~(if (keyword? ?r)
     [?x ?r (next-variable "e")]
     (list ?r ?x (next-variable "e"))))
@@ -272,19 +277,19 @@
   "Converts justice rule syntax into DataScript bridged triple syntax."
   #_(top-down
     ;; Unique entity, we only need the id
-    {:db/id (pred integer? ?id)}
+    {:db/id (m/pred integer? ?id)}
     ?id
 
     ;; base case for patterns
-    (and
+    (m/and
      {?k ?v :as ?m}
      ;; TODO: is there an explict way to expect this in meander?
-     (guard (= (count ?m) 1))
+     (m/guard (= (count ?m) 1))
      (let ?e ~(gensym "?e")))
     [?v ~(invert ?k) ?e]
 
 
-    (and
+    (m/and
      {?k {:as ?n} :as ?m}
      (let ?e ~(gensym "?e")))
     [?p ?k ?e]
@@ -292,7 +297,7 @@
 
 
     ;; an entity pattern must match the conjunction of triple clauses for each property
-    (and
+    (m/and
      ;; TODO: can this be meander syntax?
      {[!ks !vs] ... :as ?m}
      (let ?e ~(gensym "?e")))
@@ -306,34 +311,34 @@
     ;; or bridged rule application:
     ;; (:k2 (my-rule ?x))
     ;; => (and (my-rule ?x ?bridge) [?bridge :k2 ?result])
-    (and (?r [?a ?b ?c])
-      (guard (op? ?r)))
+    (m/and (?r [?a ?b ?c])
+      (m/guard (op? ?r)))
     ~(bridge-expr ?r vector ?a ?b ?c)
 
-    (and (?r (?a ?b ?c))
-      (guard (op? ?r))
-      (guard (op? ?a)))
+    (m/and (?r (?a ?b ?c))
+      (m/guard (op? ?r))
+      (m/guard (op? ?a)))
     ~(bridge-expr ?r list ?a ?b ?c)
 
     ;; keep adding more clauses as we move outward from the expression center
-    (and (?r ('and . !clauses ... [?a ?b ?c]))
-      (guard (op? ?r)))
+    (m/and (?r ('and . !clauses ... [?a ?b ?c]))
+      (m/guard (op? ?r)))
     ('and . !clauses ... ~@(rest (bridge-expr ?r vector ?a ?b ?c)))
 
-    (and (?r ('and . !clauses ... (?a ?b ?c)))
-      (guard (op? ?r))
-      (guard (op? ?a)))
+    (m/and (?r ('and . !clauses ... (?a ?b ?c)))
+      (m/guard (op? ?r))
+      (m/guard (op? ?a)))
     ('and . !clauses ... ~@(rest (bridge-expr ?r list ?a ?b ?c)))))
 
 (def ^:private invert-reverse-lookups
   (bottom-up
    (and [?x ?r ?y]
-        (guard (reverse-lookup? ?r)))
+        (m/guard (reverse-lookup? ?r)))
    [?y ~(invert ?r) ?x]
 
    (and (?r ?x ?y)
-        (guard (rule-name? ?r))
-        (guard (reverse-lookup? ?r)))
+        (m/guard (rule-name? ?r))
+        (m/guard (reverse-lookup? ?r)))
    (~(invert ?r) ?y ?x)))
 
 (defn- replace-base [expr sym1 sym2]
@@ -429,8 +434,8 @@
   "Rules are qualified with their namespace, so that you can follow function conventions."
   [current-ns-str]
   (bottom-up
-    (and (?s . !args ...)
-      (guard (and (symbol? ?s)
+    (m/and (?s . !args ...)
+      (m/guard (and (symbol? ?s)
                (not (contains? logic? ?s))
                (not (qualified-symbol? ?s)))))
     (~(symbol current-ns-str (name ?s)) . !args ...)))
@@ -456,7 +461,7 @@
         matching-rules (filter match-rule rules)
         other-rules (remove match-rule rules)
         entity-result-clause?
-        (m/rewrite
+        (s/rewrite
           ;; entity position in a datom triple
           [~result-variable ?a ?v]
           true

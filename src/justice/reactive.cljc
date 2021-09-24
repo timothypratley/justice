@@ -5,7 +5,24 @@
   This namespace provides convenience wrappers to set up reactive entity navigation,
   suitable for React UIs."
   (:require [datascript.core :as d]
-            [meander.strategy.gamma :as m]))
+            [justice.core :as j]))
+
+;; TODO: how can I do this without including reagent?
+#_
+(defn rq
+   "Creates a reactive query.
+   Takes justice syntax query and returns a reaction.
+   Deref to get query results."
+   [query]
+   (let [k (keyword (gensym "listener_"))
+         reactive-db (reagent.core/atom @j/*conn*)]
+     (d/listen! j/*conn* k
+                (fn tx-listener [tx-report]
+                  (reset! reactive-db (:db-after tx-report))))
+     (reagent.ratom/make-reaction
+      #(j/q @reactive-db query)
+      :on-dispose (fn dispose-rq []
+                    (d/unlisten! j/*conn* k)))))
 
 (defn- tx-relates-to-entity? [id {:keys [tx-data]}]
   (boolean

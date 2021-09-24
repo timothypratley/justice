@@ -4,7 +4,7 @@
   (:require #_[justice.defn :as defn]
             [justice.dependencies :as dependencies]
             [justice.translation :as t]
-            [clojure.pprint :as pprint]
+            [fipp.edn :as pprint]
             [datascript.core :as d]))
 
 (def ^{:dynamic true
@@ -27,7 +27,7 @@
      (set! *conn* conn)
      :clj
      (alter-var-root #'*conn* (constantly conn)))
-  nil)
+  *conn*)
 
 (defmacro with-conn
   "Provide a db connection to use for rule applications."
@@ -45,12 +45,13 @@
 (defn q
   "Performs a query using justice syntax.
   May call registered rules.
-  When calling registered rules, use the fully qualified name (`rule-name will work from within the same namespace).
+  When calling registered rules, use the fully qualified name,
+  `rule-name will work from within the same namespace.
   May be recursive with the special name justice.core/q.
   Use attach prior to calling, or provide a db as the first argument."
   ([expr] (q @*conn* expr))
-  ([db expr]
-   (assert (d/db? db) "Expected a db as first argument.")
+  ([expr db]
+   (assert (d/db? db) "Expected a db as second argument.")
    (let [q-rules (t/as-rules `q [] expr)
          registry (assoc *rule-registry* `q q-rules)
          rules (dependencies/relevant-rules `q registry)]
@@ -60,13 +61,13 @@
          `(d/q
             ~{:find '[[?result ...]]
               :in '[$ %]
-              :where [(list `q '?result)]}
+              :where `[(q ~'?result)]}
             ~'db
             ~rules)))
      (let [result (d/q
                     {:find '[[?result ...]]
                      :in '[$ %]
-                     :where [(list `q '?result)]}
+                     :where `[(q ~'?result)]}
                     db
                     rules)]
        (if (t/entity-result? db rules `q ['?result])

@@ -1,19 +1,19 @@
 (ns justice.mespec-test
   (:require [clojure.test :refer [deftest is testing]]
             [justice.mespec :as ms]
-            [meander.strategy.gamma :as m]))
+            [meander.strategy.epsilon :as m]))
 #_#_
 (deftest rewrite-optionals-test
-  (is (= '(?name . (and (pred string !?docstring)
-                        (guard (<= (count !?docstring) 1))) ...
-                 . (and (pred map? !?attr-map)
-                        (guard (<= (count !?attr-map) 1))) ...)
-         (ms/replace-from-pattern-optionals '(?name (pred string? ??docstring) (pred map? ??attr-map)))))
+  (is (= '(?name . (m/and (m/pred string !?docstring)
+                        (m/guard (<= (count !?docstring) 1))) ...
+                 . (m/and (m/pred map? !?attr-map)
+                        (m/guard (<= (count !?attr-map) 1))) ...)
+         (ms/replace-from-pattern-optionals '(?name (m/pred string? ??docstring) (m/pred map? ??attr-map)))))
   (is (= '(?name . !?docstring ... . !?attr-map ...)
-         (ms/replace-to-pattern-optionals '(?name (pred string? ??docstring) (pred map? ??attr-map)))))
+         (ms/replace-to-pattern-optionals '(?name (m/pred string? ??docstring) (m/pred map? ??attr-map)))))
 
-  (is (= '((. (and (pred identity !?name)
-                   (guard (<= (count !?name) 1))) ...)
+  (is (= '((. (m/and (m/pred identity !?name)
+                   (m/guard (<= (count !?name) 1))) ...)
             (. !?name ...))
          (ms/replace-clause-optionals '(??name) '(??name)))))
 

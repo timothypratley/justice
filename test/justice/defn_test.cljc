@@ -1,7 +1,7 @@
 (ns justice.defn-test
   (:require [clojure.test :refer [deftest is testing]]
             [justice.defn :as defn]
-            [meander.strategy.gamma :as m]))
+            [meander.strategy.epsilon :as s]))
 
 (def defn-identity (defn/wrap-defn identity))
 
@@ -26,7 +26,7 @@
     (let [invalid-defn-forms
           '[(foo bar [a b] baz)]]
       (doseq [test-case invalid-defn-forms]
-        (is (= m/*fail* (defn-identity test-case))
+        (is (= s/*fail* (defn-identity test-case))
           "should fail to parse")))))
 
 (deftest defrule-test
